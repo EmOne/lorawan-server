@@ -38,6 +38,9 @@ To create a new connector you set:
    - **network** when the destination server cannot be reached
    - **topic** when the target broker configuration is wrong
 
+When a *Failed* flag is raised, the connector is inactive. Fix the indicated root
+cause and then remove the flag to reactivate the connector.
+
 On the Authentication tab:
  - **Client ID** is the MQTT parameter
  - **Auth** identifies the type of authentication:
@@ -95,9 +98,11 @@ To create a web socket connector you set:
  - **Publish Uplinks** to a URL pattern starting with a slash, e.g. '/ws/uplink/{devaddr}'
  - **Publish Events** to another URL pattern, e.g. '/ws/events/{devaddr}'
 
-The pattern may contain uplink Fields of the corresponding [Handler](Handlers.md),
+The patterns may contain uplink Fields of the corresponding [Handler](Handlers.md),
 mainly `{deveui}`, `{devaddr}` or `{app}` corresponding to a group of devices with
 the same application (Handler name).
+
+The *Subscribe* and *Received Topic* fields are not used and can be left empty.
 
 To connect to the WebSocket, then open URL to the path you defined, i.e.
 `ws://server:8080/ws/uplink/<DevAddr>` or `ws://server:8080/ws/events/<DevAddr>`.
@@ -145,11 +150,20 @@ To create a HTTP connector you set:
  - **Publish Uplinks** to a URL pattern starting with a slash, e.g. '/uplink/{devaddr}'
  - **Publish Events** to another URL pattern, e.g. '/events/{devaddr}'
  - **Received Topic** is a template for parsing the topic of received downlink
-   messages, e.g. `in/{devaddr}`.
+   messages, e.g. `/in/{devaddr}`.
 
 Make sure that all URL paths start with a slash ('/'). The *Received Topic* must
 be different to all Web Socket *Publish* patterns.
 
+Every uplink will trigger a HTTP POST to `http://host:port/uplink/{devaddr}`.
+
+To send a downlink request you should make a HTTP PUT or POST to
+`http://yourserver:8080/in/{devaddr}` and authenticate using the admin credentials.
+For example:
+
+```bash
+curl -v --digest -uadmin:admin -H "Content-Type: application/json" -X POST http://localhost:8080/in/11223344 -d "{\"data\":\"ABCDEFG\"}"
+```
 
 ## Generic MQTT Servers
 
