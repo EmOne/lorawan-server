@@ -351,6 +351,10 @@ cayenne_decode(<<Ch, 134, X:16/signed-integer, Y:16/signed-integer, Z:16/signed-
 % gps
 cayenne_decode(<<Ch, 136, Lat:24/signed-integer, Lon:24/signed-integer, Alt:24/signed-integer, Rest/binary>>, Acc) ->
     cayenne_decode(Rest, add_field(Ch, #{lat => Lat/10000, lon => Lon/10000, alt => Alt/100}, Acc));
+% error code 
+cayenne_decode(<<Ch, 255, Val:32/unsigned-integer, Rest/binary>>, Acc) ->
+    cayenne_decode(Rest, add_field(Ch, Val, Acc));
+
 cayenne_decode(<<>>, Acc) ->
     Acc.
 
