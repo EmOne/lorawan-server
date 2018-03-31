@@ -96,7 +96,7 @@ store_fields(Pool, Pattern, Vars0) ->
 prepare_bson(Data) ->
     maps:map(
         fun
-            (Key, Value) when Key == mac; Key == deveui; Key == devaddr; Key == data ->
+            (Key, Value) when Key == best_gw; Key == mac; Key == deveui; Key == devaddr; Key == data ->
                 lorawan_utils:binary_to_hex(Value);
             (_Key, Value) when is_map(Value) ->
                 prepare_bson(Value);
