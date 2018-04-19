@@ -178,8 +178,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .editable(false),
         nga.field('ip_address.ip').label('IP Address')
             .editable(false),
-        nga.field('last_alive', 'datetime').label('Last Alive'),
-        nga.field('last_report', 'datetime').label('Last Report'),
+        nga.field('last_alive', 'datetime'),
+        nga.field('last_gps', 'datetime').label('Last GPS'),
+        nga.field('last_report', 'datetime'),
         nga.field('mac', 'template').label('Network Delay')
             .template('<pgraph value="value"></pgraph>'),
         nga.field('mac', 'template').label('Transmissions')
@@ -191,7 +192,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     gateways.editionView().fields(gateways.creationView().fields());
     gateways.editionView().template(editWithTabsTemplate([
         {name:"General", min:0, max:7},
-        {name:"Status", min:7, max:13}
+        {name:"Status", min:7, max:14}
     ]));
     // add to the admin application
     admin.addEntity(gateways);
@@ -229,7 +230,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 { value: 'CN470', label: 'China 470-510MHz' },
                 { value: 'AS923', label: 'Asia 923MHz' },
                 { value: 'KR920', label: 'South Korea 920-923MHz' },
-                { value: 'IN925', label: 'India 865-867MHz' }
+                { value: 'IN865', label: 'India 865-867MHz' }
             ])
             .validation({ required: true }),
         nga.field('tx_codr', 'choice').label('Coding Rate')
@@ -1131,7 +1132,7 @@ function parse_bitstring(value, entry) {
 }
 
 function validate_frequency(value) {
-    if(value < 400 || value > 1000)
+    if(value != null && (value < 400 || value > 1000))
         throw new Error ('Frequency must be 400..1000 MHz');
 }
 

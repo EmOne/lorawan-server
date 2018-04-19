@@ -115,11 +115,12 @@ In addition to that you may specify the following optional fields:
   data        | Hex String  | Raw application payload, encoded as a hexadecimal string.
   confirmed   | Boolean     | Whether the message shall be confirmed (false by default).
   pending     | Boolean     | Whether the application has more to send (false by default).
-  receipt     | Any         | Custom data to receive in the in Delivered and Lost events.
+  receipt     | Any         | If present, the delivery confirmation (**delivered** or **lost** event) will be sent for *confirmed* downlinks. The value of this field will be sent back in the *receipt* field of the event.
 
 For example (class A):
 ```json
-    {"devaddr":"11223344", "data":"0026BF08BD03CD35000000000000FFFF", "confirmed":true}
+    {"devaddr":"11223344", "data":"0026BF08BD03CD35000000000000FFFF"}
+    {"devaddr":"11223344", "data":"0026BF08BD03CD35000000000000FFFF", "confirmed":true, "receipt":"123XYZ"}
 ```
 Or (class C):
 ```json
@@ -141,7 +142,7 @@ applications the following fields:
   deveui     | Hex String  | DevEUI of the device.
   appargs    | Any         | Application arguments for this node.
   datetime   | ISO 8601    | Timestamp using the server clock.
-  receipt    | Any         | Custom data sent along the confirmed downlink.
+  receipt    | Any         | Custom data sent in the *receipt* field of the confirmed downlink request.
 
 
 ## Payload
@@ -248,6 +249,16 @@ Or even modify, for example:
 ```erlang
 fun(#{fcnt := FCnt}, <<LED, Press:16, Temp:16, AltBar:16, Batt, Lat:24, Lon:24, AltGps:16>>) ->
   #{seq => FCnt, led => LED, pressure => Press, temp => Temp/100, alt_bar => AltBar, batt => Batt}
+end.
+```
+
+To accept various frames in one function you can write alternative functions,
+for example:
+```erlang
+fun (Fields, <<16#0402:16, Temp:16/signed>>) ->
+        Fields#{temp => Temp};
+    (Fields, <<16#0405:16, Level>>) ->
+        Fields#{level => Level}
 end.
 ```
 
