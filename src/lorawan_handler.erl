@@ -86,7 +86,12 @@ idle(cast, {frame, {MAC, RxQ, _}, PHYPayload}, Data) ->
                     {next_state, drop, Data}
             end;
         {ignore, Frame} ->
-            {next_state, log_only, Frame};
+            case mnesia:dirty_read(servers, node()) of
+                [#server{log_ignored=true}] ->
+                    {next_state, log_only, Frame};
+                _Else ->
+                    {next_state, drop, Data}
+            end;
         {error, Error} ->
             lorawan_utils:throw_error(server, Error),
             {next_state, drop, Data};

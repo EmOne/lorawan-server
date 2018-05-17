@@ -7,6 +7,7 @@
 
 -export([ensure_tables/0, ensure_table/2]).
 -export([get_rxframes/1, get_last_rxframes/2]).
+-export([record_fields/1]).
 
 -include("lorawan.hrl").
 -include("lorawan_db.hrl").
@@ -197,6 +198,8 @@ ensure_fields(Name, TabDef) ->
 get_value(_Rec, node, PropList) ->
     % import data from old structure
     get_value0(link, node, PropList);
+get_value(server, sname, PropList) ->
+    get_value0(name, sname, PropList);
 get_value(user, pass_ha1, PropList) ->
     case proplists:is_defined(pass_ha1, PropList) of
         true ->
@@ -222,12 +225,20 @@ get_value0(Old, New, PropList) ->
     proplists:get_value(New, PropList,
       proplists:get_value(Old, PropList)).
 
+record_fields({rxq, Freq, DatR, CodR, Time, TmSt, Rssi, LSnr}) ->
+    % backward compatibility 29.4.2018
+    [Freq, DatR, CodR, Time, undefined, TmSt, Rssi, LSnr];
+record_fields(Record) ->
+    tl(tuple_to_list(Record)).
+
 set_defaults(users) ->
     lager:info("Database create default user:password"),
     {ok, {User, Pass}} = application:get_env(lorawan_server, http_admin_credentials),
     mnesia:dirty_write(users, #user{
         name=User,
         pass_ha1=lorawan_http_digest:ha1({User, ?REALM, Pass})});
+set_defaults(servers) ->
+    mnesia:dirty_write(servers, #server{sname=node(), router_perf=[]});
 set_defaults(_Else) ->
     ok.
 

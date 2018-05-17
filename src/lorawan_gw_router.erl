@@ -130,7 +130,7 @@ handle_info(submit_stats, #state{request_cnt=RequestCnt, error_cnt=ErrorCnt}=Sta
             Server =
                 case mnesia:read(servers, node(), write) of
                     [S] -> S#server{router_perf=append_perf(Perf, S#server.router_perf)};
-                    [] -> #server{name=node(), router_perf=[Perf]}
+                    [] -> #server{sname=node(), router_perf=[Perf]}
                 end,
             mnesia:write(servers, Server, write)
         end),
@@ -281,9 +281,14 @@ remove_duplicates([{{MAC, RxQ, GWState}, PHYPayload} | Tail], Unique) ->
 remove_duplicates([], Unique) ->
     Unique.
 
-handle_uplink({GWData, PHYPayload}, State) ->
-    store_last_gps(GWData,
-        handle_uplink0({GWData, PHYPayload}, State)).
+handle_uplink({{MAC, RxQ, _GWState}=GWData, PHYPayload}, State) ->
+    case mnesia:dirty_read(gateways, MAC) of
+        [] ->
+            lorawan_utils:throw_error({gateway, MAC}, unknown_mac, aggregated),
+            State;
+        [_Gateway] ->
+            handle_uplink0({GWData, PHYPayload}, store_last_gps(MAC, RxQ, State))
+    end.
 
 handle_uplink0({GWData, PHYPayload}, #state{recent=Recent, request_cnt=Cnt}=State) ->
     case dict:find(PHYPayload, Recent) of
@@ -300,10 +305,15 @@ handle_uplink0({GWData, PHYPayload}, #state{recent=Recent, request_cnt=Cnt}=Stat
             State#state{recent=dict:store(PHYPayload, {[GWData|GWDataList], Handler}, Recent)}
     end.
 
-store_last_gps({_MAC, #rxq{time=undefined}, _GWState}, State) ->
+store_last_gps(_MAC, #rxq{time=undefined}, State) ->
     State;
-store_last_gps({MAC, #rxq{time=Time}, _GWState}, #state{gateways=Dict}=State) ->
-    {ok, Stats} = dict:find(MAC, Dict),
-    State#state{gateways=dict:store(MAC, Stats#gwstats{last_gps=Time}, Dict)}.
+store_last_gps(MAC, #rxq{time=Time}, #state{gateways=Dict}=State) ->
+    case dict:find(MAC, Dict) of
+        {ok, Stats} ->
+            State#state{gateways=dict:store(MAC, Stats#gwstats{last_gps=Time}, Dict)};
+        error ->
+            % not yet initialized
+            State
+    end.
 
 % end of file

@@ -4,7 +4,7 @@ Open-source LoRaWAN Server that integrates both the network-server and the appli
 This is useful for application providers that operate their own LoRaWAN network,
 or for device and application developers.
 
-**This is release 0.5.3.** Migrating to this version will preserve the
+**This is release 0.5.4.** Migrating to this version will preserve the
 Device/Node addresses and security keys, but will delete many ADR parameters, which
 got moved to the Profile settings. You are required to review and complete
 the configuration before connecting any gateway or device!
@@ -172,6 +172,7 @@ and institutions. It was mentioned by the following blogs and articles:
  * [LoraWAN server running on OpenWrt/LEDE](http://matchx.io/community/box/5-lorawan-server-running-on-the-box)
  * [Espruino RN2483 LoRa Modules](http://www.espruino.com/RN2483)
  * [1-Gate LoRaWAN Gateway COMPACT](http://www.1-gate.com/english/lorawan-gateways)
+ * [LoRaWAN evaluation by Witekio](https://witekio.com/blog/lorawan-dedicated-iot-network)
 
 Please let me know if you use the lorawan-server and want to be listed here.
 
