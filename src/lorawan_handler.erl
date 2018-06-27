@@ -86,7 +86,12 @@ idle(cast, {frame, {MAC, RxQ, _}, PHYPayload}, Data) ->
                     {next_state, drop, Data}
             end;
         {ignore, Frame} ->
-            {next_state, log_only, Frame};
+            case mnesia:dirty_read(servers, node()) of
+                [#server{log_ignored=true}] ->
+                    {next_state, log_only, Frame};
+                _Else ->
+                    {next_state, drop, Data}
+            end;
         {error, Error} ->
             lorawan_utils:throw_error(server, Error),
             {next_state, drop, Data};
@@ -188,7 +193,7 @@ send_unicast({MAC, GWState}, {Network, Profile, #node{devaddr=DevAddr}=Node}, Tx
     % we are about to overwrite the pending frame for this device
     case mnesia:dirty_read(pending, DevAddr) of
         [#pending{confirmed=true, receipt=Receipt}] ->
-            lorawan_utils:throw_error({node, DevAddr}, downlink_lost),
+            lorawan_utils:throw_error({node, DevAddr}, downlink_expired),
             invoke_handler(handle_delivery, {Network, Profile, Node}, [lost, Receipt]);
         _Else ->
             ok

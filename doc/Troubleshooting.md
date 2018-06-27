@@ -3,9 +3,11 @@
 Overview of recent errors and warnings is provided in the server [Event List](Events.md).
 Details can be found in the server logs.
 
-The server logs are stored in `lorawan-server/log`. By default three log files are
-provided: `debug.log`, `error.log` and `crash.log`. The log messages contain date
-and time, severity (debug, info, notice, warning, error), process ID and a description.
+Depending on your installation the server logs are stored in `/var/log/lorawan-server`,
+`/var/lib/lorawan-server/log` or just `lorawan-server/log`. By default three log
+files are provided: `debug.log`, `error.log` and `crash.log`. The log messages
+contain date and time, severity (debug, info, notice, warning, error), process ID
+and a description.
 
 For example:
 ```
@@ -116,6 +118,16 @@ The server is configured to use the *semtech-mote* application, but your device
 sent some other data. Make sure your firmware uses the
 [supported format](https://github.com/Lora-net/LoRaMac-node/blob/master/src/apps/LoRaMac/classA/LoRaMote/main.c#L207).
 
+### downlink_missed
+
+Confirmed downlink was sent, but the device indicated it did not received it.
+Depending on the application logic the downlink may be retransmitted.
+
+### downlink_expired
+
+Confirmed downlink was superseded before it could be transmitted to the device.
+See the **D/L Expires** setting of the corresponding [Handler](Handlers.md).
+
 ### prerequisite_failed
 
 This is reported when the lorawan-server is started with older Erlang/OTP. At
@@ -139,6 +151,14 @@ device a downlink shall be sent. You have two options:
 The problem is the Lorank8 proprietary message format. In your gateway config
 you likely have `stat_format` set to `idee_concise` or `idee_verbose`. You need
 to change `stat_format` to `semtech` to get this working.
+
+### Browser reports NS_ERROR_NET_INADEQUATE_SECURITY
+
+You are using old version of Erlang that does not support the newest ciphers
+required by HTTP/2. Erlang 20 is recommended for TLS/SSL.
+
+As a quick fix, in Mozilla you can disable the checks in `about:config`, by
+setting `network.http.spdy.enforce-tls-profile` to `false`.
 
 ### Lost admin password
 

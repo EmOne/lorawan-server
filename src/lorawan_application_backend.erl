@@ -95,8 +95,8 @@ parse_rxq(Gateways, Fields, Vars) ->
     {MAC1, #rxq{freq=Freq, datr=Datr, codr=Codr, rssi=RSSI1, lsnr=SNR1}} = hd(Gateways),
     RxQ =
         lists:map(
-            fun({MAC, #rxq{time=Time, rssi=RSSI, lsnr=SNR}}) ->
-                #{mac=>MAC, rssi=>RSSI, lsnr=>SNR, time=>Time}
+            fun({MAC, #rxq{time=Time, tmms=TmMs, rssi=RSSI, lsnr=SNR}}) ->
+                #{mac=>MAC, rssi=>RSSI, lsnr=>SNR, time=>Time, tmms=>TmMs}
             end,
             Gateways),
     vars_add(freq, Freq, Fields,
@@ -262,7 +262,7 @@ purge_frames(#handler{downlink_expires = <<"superseded">>}=Handler,
     lists:foreach(
         fun
             (#txdata{confirmed=true, receipt=Receipt}) ->
-                lorawan_utils:throw_error({node, DevAddr}, downlink_lost),
+                lorawan_utils:throw_error({node, DevAddr}, downlink_expired),
                 send_event(lost, #{receipt => Receipt}, Handler, Node);
             (#txdata{}) ->
                 ok
