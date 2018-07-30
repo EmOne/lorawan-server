@@ -53,15 +53,15 @@ code_change(_OldVsn, State, _Extra) ->
 
 update_routes(State) ->
     Dispatch = compile_routes(State),
-    case {application:get_env(lorawan_server, http_admin_listen, []),
-            application:get_env(lorawan_server, http_admin_listen_ssl, [])} of
-        {[], []} ->
+    Listen = ranch:info(),
+    case {proplists:is_defined(http, Listen), proplists:is_defined(https, Listen)} of
+        {false, false} ->
             ok;
-        {_HttpOpts, []} ->
+        {true, false} ->
             cowboy:set_env(http, dispatch, Dispatch);
-        {[], _SslOpts} ->
+        {false, true} ->
             cowboy:set_env(https, dispatch, Dispatch);
-        {_HttpOpts, _SslOpts} ->
+        {true, true} ->
             cowboy:set_env(https, dispatch, Dispatch),
             case application:get_env(lorawan_server, http_admin_redirect_ssl, true) of
                 false ->
@@ -87,51 +87,59 @@ get_routes(Dict) ->
         [], Dict).
 
 %% https://ninenines.eu/docs/en/cowboy/2.2/guide/routing/
-static_routes() -> [
-    {"/api/servers/[:name]", lorawan_admin_servers, []},
+static_routes() ->
+    AdminPath = application:get_env(lorawan_server, http_admin_path, <<"/admin">>),
+    [{"/api/config/[:name]", lorawan_admin_db_record,
+        [config, record_info(fields, config)]},
+    {"/api/servers/[:sname]", lorawan_admin_servers, []},
     {"/api/applications/[:name]", lorawan_admin_applications, []},
     {"/api/users/[:name]", lorawan_admin_db_record,
-        [users, user, record_info(fields, user)]},
-    {"/api/networks/[:name]", lorawan_admin_db_record,
-        [networks, network, record_info(fields, network)]},
+        [user, record_info(fields, user)]},
+    {"/api/areas/[:name]", lorawan_admin_db_record,
+        [area, record_info(fields, area)]},
     {"/api/gateways/[:mac]", lorawan_admin_db_record,
-        [gateways, gateway, record_info(fields, gateway)]},
+        [gateway, record_info(fields, gateway)]},
     {"/api/multicast_channels/[:devaddr]", lorawan_admin_db_record,
-        [multicast_channels, multicast_channel, record_info(fields, multicast_channel)]},
+        [multicast_channel, record_info(fields, multicast_channel)]},
+    {"/api/networks/[:name]", lorawan_admin_db_record,
+        [network, record_info(fields, network)]},
+    {"/api/groups/[:name]", lorawan_admin_db_record,
+        [group, record_info(fields, group)]},
     {"/api/profiles/[:name]", lorawan_admin_db_record,
-        [profiles, profile, record_info(fields, profile)]},
+        [profile, record_info(fields, profile)]},
     {"/api/choices/regions", lorawan_admin_choices, regions},
     {"/api/choices/networks", lorawan_admin_choices, networks},
     {"/api/choices/profiles", lorawan_admin_choices, profiles},
     {"/api/devices/[:deveui]", lorawan_admin_db_record,
-        [devices, device, record_info(fields, device)]},
+        [device, record_info(fields, device)]},
     {"/api/nodes/[:devaddr]", lorawan_admin_db_record,
-        [nodes, node, record_info(fields, node)]},
+        [node, record_info(fields, node)]},
     {"/api/ignored_nodes/[:devaddr]", lorawan_admin_db_record,
-        [ignored_nodes, ignored_node, record_info(fields, ignored_node)]},
-    {"/api/txframes/[:frid]", lorawan_admin_db_record,
-        [txframes, txframe, record_info(fields, txframe)]},
+        [ignored_node, record_info(fields, ignored_node)]},
+    {"/api/queued/[:frid]", lorawan_admin_db_record,
+        [queued, record_info(fields, queued)]},
     {"/api/rxframes/[:frid]", lorawan_admin_db_record,
-        [rxframes, rxframe, record_info(fields, rxframe)]},
+        [rxframe, record_info(fields, rxframe)]},
     {"/api/handlers/[:app]", lorawan_admin_db_record,
-        [handlers, handler, record_info(fields, handler)]},
+        [handler, record_info(fields, handler)]},
     {"/api/connectors/[:connid]", lorawan_admin_db_record,
-        [connectors, connector, record_info(fields, connector)]},
+        [connector, record_info(fields, connector)]},
     {"/api/connections/[:app]", lorawan_admin_connections, []},
     {"/api/connections/:app/:action", lorawan_admin_connections, []},
     {"/api/events/[:evid]", lorawan_admin_db_record,
-        [events, event, record_info(fields, event)]},
+        [event, record_info(fields, event)]},
     {"/api/upload", lorawan_admin_upload, []},
-    {"/admin", cowboy_static, {priv_file, lorawan_server, "admin/index.html"}},
+    {"/admin", lorawan_admin_static, {priv_file, lorawan_server, <<"admin/index.html">>}},
     {"/admin/timeline", lorawan_admin_timeline, []},
-    {"/admin/sgraph/:name", lorawan_admin_graph_server, []},
+    {"/admin/admin-config.js", lorawan_admin_config_js, []},
+    {"/admin/sgraph/:sname", lorawan_admin_graph_server, []},
     {"/admin/pgraph/:mac", lorawan_admin_graph_gw, [pgraph]},
     {"/admin/tgraph/:mac", lorawan_admin_graph_gw, [tgraph]},
     {"/admin/rgraph/:devaddr", lorawan_admin_graph_rx, [rgraph]},
     {"/admin/qgraph/:devaddr", lorawan_admin_graph_rx, [qgraph]},
     {"/admin/ngraph/:devaddr", lorawan_admin_graph_node, []},
-    {"/admin/[...]", cowboy_static, {priv_dir, lorawan_server, "admin"}},
-    {"/", cowboy_static, {priv_file, lorawan_server, "root.html"}},
-    {"/favicon.ico", cowboy_static, {priv_file, lorawan_server, "favicon.ico"}}].
+    {"/admin/[...]", lorawan_admin_static, {priv_dir, lorawan_server, <<"admin">>}},
+    {"/", lorawan_admin_redirect, #{path => AdminPath}},
+    {"/favicon.ico", lorawan_admin_static, {priv_file, lorawan_server, <<"favicon.ico">>}}].
 
 % end of file

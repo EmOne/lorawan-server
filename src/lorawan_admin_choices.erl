@@ -19,7 +19,7 @@ init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
 
 is_authorized(Req, Opts) ->
-    lorawan_admin:handle_authorization(Req, Opts).
+    {lorawan_admin:handle_authorization(Req), Req, Opts}.
 
 allowed_methods(Req, Opts) ->
     {[<<"OPTIONS">>, <<"GET">>], Req, Opts}.
@@ -48,20 +48,25 @@ handle_get(Req, networks=Opts) ->
             fun(Net) ->
                 {Net, network_choices(Net)}
             end,
-            mnesia:dirty_all_keys(networks)),
+            mnesia:dirty_all_keys(network)),
     {jsx:encode(Nets), Req, Opts};
 handle_get(Req, profiles=Opts) ->
     Profs =
         lists:map(
             fun(Prof) ->
-                [#profile{network=Net}] = mnesia:dirty_read(profiles, Prof),
-                {Prof, network_choices(Net)}
+                [#profile{group=Group}] = mnesia:dirty_read(profile, Prof),
+                case mnesia:dirty_read(group, Group) of
+                    [#group{network=Net}] when is_binary(Net), byte_size(Net) > 0 ->
+                        {Prof, network_choices(Net)};
+                    _Else ->
+                        {Prof, []}
+                end
             end,
-            mnesia:dirty_all_keys(profiles)),
+            mnesia:dirty_all_keys(profile)),
     {jsx:encode(Profs), Req, Opts}.
 
 network_choices(Net) ->
-    [#network{region=Region, max_eirp=Max, min_power=Min}] = mnesia:dirty_read(networks, Net),
+    [#network{region=Region, max_eirp=Max, min_power=Min}] = mnesia:dirty_read(network, Net),
     [
         {uplink_datar, uplink_datar_choices0(Region)},
         {downlink_datar, downlink_datar_choices0(Region)},

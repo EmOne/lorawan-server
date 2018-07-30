@@ -11,23 +11,24 @@
 -export([content_types_provided/2]).
 -export([content_types_accepted/2]).
 -export([resource_exists/2]).
+-export([delete_resource/2]).
 
--export([handle_get/2, handle_write/2]).
+-export([handle_get/2, handle_write/2, get_server/0]).
 
 -include("lorawan.hrl").
 -record(state, {key}).
 
 init(Req, _Opts) ->
-    Key = cowboy_req:binding(name, Req),
+    Key = lorawan_admin:parse_field(sname, cowboy_req:binding(sname, Req)),
     {cowboy_rest, Req, #state{key=Key}}.
 
 is_authorized(Req, State) ->
-    lorawan_admin:handle_authorization(Req, State).
+    {lorawan_admin:handle_authorization(Req), Req, State}.
 
 allowed_methods(Req, #state{key=undefined}=State) ->
     {[<<"OPTIONS">>, <<"GET">>], Req, State};
 allowed_methods(Req, State) ->
-    {[<<"OPTIONS">>, <<"GET">>, <<"PUT">>], Req, State}.
+    {[<<"OPTIONS">>, <<"GET">>, <<"PUT">>, <<"DELETE">>], Req, State}.
 
 content_types_provided(Req, State) ->
     {[
@@ -35,17 +36,23 @@ content_types_provided(Req, State) ->
     ], Req, State}.
 
 handle_get(Req, #state{key=undefined}=State) ->
-    {jsx:encode([get_server()]), Req, State};
-handle_get(Req, State) ->
-    {jsx:encode(get_server()), Req, State}.
+    {jsx:encode([get_server(N) || N <- mnesia:table_info(schema, disc_copies)]), Req, State};
+handle_get(Req, #state{key=Key}=State) ->
+    {jsx:encode(get_server(Key)), Req, State}.
+
+get_server(Node) ->
+    case lists:member(Node, nodes([this, connected])) of
+        true ->
+            rpc:call(Node, ?MODULE, get_server, []);
+        false ->
+            Config = lorawan_admin:build(?to_map(server, load_server(Node))),
+            Config#{
+                health_alerts => [<<"disconnected">>],
+                health_decay => 100}
+    end.
 
 get_server() ->
-    Server =
-        case mnesia:dirty_read(servers, node()) of
-            [S] -> S;
-            [] -> #server{sname=node(), router_perf=[]}
-        end,
-    Config = lorawan_admin:build(?to_map(server, Server)),
+    Config = lorawan_admin:build(?to_map(server, load_server(node()))),
     Alarms = get_alarms(),
     Config#{
         modules => get_modules(),
@@ -53,6 +60,12 @@ get_server() ->
         disk => get_disk_data(),
         health_alerts => Alarms,
         health_decay => length(Alarms)}.
+
+load_server(Node) ->
+    case mnesia:dirty_read(server, Node) of
+        [S] -> S;
+        [] -> #server{sname=Node, router_perf=[]}
+    end.
 
 get_modules() ->
     lists:map(
@@ -85,7 +98,7 @@ handle_write(Req, State) ->
     {ok, Data, Req2} = cowboy_req:read_body(Req),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
         Struct when is_map(Struct) ->
-            ok = mnesia:dirty_write(servers, ?to_record(server, lorawan_admin:parse(Struct), undefined)),
+            ok = mnesia:dirty_write(?to_record(server, lorawan_admin:parse(Struct), undefined)),
             {true, Req2, State};
         _Else ->
             lager:debug("Bad JSON in HTTP request"),
@@ -95,11 +108,10 @@ handle_write(Req, State) ->
 resource_exists(Req, #state{key=undefined}=State) ->
     {true, Req, State};
 resource_exists(Req, #state{key=Key}=State) ->
-    case atom_to_binary(node(), latin1) of
-        Key ->
-            {true, Req, State};
-        _Else ->
-            {false, Req, State}
-    end.
+    {lists:member(Key, mnesia:table_info(schema, disc_copies)), Req, State}.
+
+delete_resource(Req, #state{key=Key}=State) ->
+    ok = mnesia:dirty_delete(server, Key),
+    {true, Req, State}.
 
 % end of file

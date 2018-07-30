@@ -20,7 +20,7 @@ init(Req, [Format]) ->
     {cowboy_rest, Req, #state{format=Format}}.
 
 is_authorized(Req, State) ->
-    lorawan_admin:handle_authorization(Req, State).
+    {lorawan_admin:handle_authorization(Req), Req, State}.
 
 allowed_methods(Req, State) ->
     {[<<"OPTIONS">>, <<"GET">>], Req, State}.
@@ -32,7 +32,7 @@ content_types_provided(Req, State) ->
 
 get_gateway(Req, #state{format=Type}=State) ->
     MAC = cowboy_req:binding(mac, Req),
-    [Gateway] = mnesia:dirty_read(gateways, lorawan_utils:hex_to_binary(MAC)),
+    [Gateway] = mnesia:dirty_read(gateway, lorawan_utils:hex_to_binary(MAC)),
     {jsx:encode([{mac, MAC}, {array, get_array(Type, Gateway)}]), Req, State}.
 
 get_array(pgraph, #gateway{delays=Delays}) when is_list(Delays) ->
@@ -78,8 +78,8 @@ get_array(_, _Else) ->
     [].
 
 resource_exists(Req, State) ->
-    case mnesia:dirty_read(gateways,
-            lorawan_utils:hex_to_binary(cowboy_req:binding(mac, Req))) of
+    case mnesia:dirty_read(gateway,
+            lorawan_admin:parse_field(mac, cowboy_req:binding(mac, Req))) of
         [] -> {false, Req, State};
         [_Stats] -> {true, Req, State}
     end.

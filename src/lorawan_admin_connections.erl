@@ -23,7 +23,7 @@ init(Req, _Opts) ->
     {cowboy_rest, Req, #state{app=App, action=Action}}.
 
 is_authorized(Req, State) ->
-    lorawan_admin:handle_authorization(Req, State).
+    {lorawan_admin:handle_authorization(Req), Req, State}.
 
 allowed_methods(Req, #state{action=undefined}=State) ->
     {[<<"OPTIONS">>, <<"GET">>], Req, State};
@@ -81,7 +81,7 @@ handle_action(Req, State) ->
 resource_exists(Req, #state{app=undefined}=State) ->
     {true, Req, State};
 resource_exists(Req, #state{app=App}=State) ->
-    case mnesia:dirty_read(handlers, App) of
+    case mnesia:dirty_read(handler, App) of
         [#handler{}] ->
             {true, Req, State};
         [] ->

@@ -8,6 +8,8 @@ rebar3
 _build
 rebar.lock
 
+package-lock.json
+
 scripts/dpkg-deb/control
 node_modules/
 priv/admin/jquery.min.js
@@ -22,5 +24,6 @@ priv/admin/img/
 priv/admin/angular-vis.js
 priv/admin/bootstrap-colorpicker-module.min.js
 priv/admin/colorpicker.min.css
+priv/admin/*.gz
 backup-*/*.json
 log/

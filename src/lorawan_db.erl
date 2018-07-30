@@ -5,8 +5,8 @@
 %
 -module(lorawan_db).
 
--export([ensure_tables/0, ensure_table/2]).
--export([get_rxframes/1, get_last_rxframes/2]).
+-export([ensure_tables/0, ensure_table/2, ensure_table/3]).
+-export([foreach_record/3, get_group/1, get_rxframes/1]).
 -export([record_fields/1]).
 
 -include("lorawan.hrl").
@@ -17,111 +17,142 @@ ensure_tables() ->
         true ->
             ok;
         false ->
-            stopped = mnesia:stop(),
-            lager:info("Database create schema"),
-            ok = mnesia:create_schema([node()]),
-            ok = mnesia:start()
+            case application:get_env(lorawan_server, db_master) of
+                undefined ->
+                    % this is the very first node starting
+                    stopped = mnesia:stop(),
+                    lager:info("Database create schema"),
+                    ok = mnesia:create_schema([node()]),
+                    ok = mnesia:start();
+                {ok, NodeName} ->
+                    pong = net_adm:ping(NodeName),
+                    ok = join_cluster(NodeName)
+            end
     end,
-    lists:foreach(fun({Name, TabDef}) -> ensure_table(Name, TabDef) end, [
-        {users, [
-            {record_name, user},
+    Renamed = [
+        {user, [users]},
+        {server, [servers]},
+        {area, [areas]},
+        {gateway, [gateways]},
+        {multicast_channel, [multicast_channels, multicast_groups]},
+        {network, [networks]},
+        {group, [groups]},
+        {profile, [profiles]},
+        {device, [devices]},
+        {node, [nodes, links]},
+        {ignored_node, [ignored_nodes, ignored_links]},
+        {rxframe, [rxframes]},
+        {connector, [connectors]},
+        {handler, [handles]},
+        {event, [events]}
+    ],
+    lists:foreach(fun({Name, TabDef}) -> ensure_table(Name, TabDef, Renamed) end, [
+        {config, [
+            {attributes, record_info(fields, config)},
+            {disc_copies, [node()]}]},
+        {user, [
             {attributes, record_info(fields, user)},
             {disc_copies, [node()]}]},
-        {servers, [
-            {record_name, server},
+        {server, [
             {attributes, record_info(fields, server)},
             {disc_copies, [node()]}]},
-        {networks, [
-            {record_name, network},
-            {attributes, record_info(fields, network)},
+        {area, [
+            {attributes, record_info(fields, area)},
             {disc_copies, [node()]}]},
-        {gateways, [
-            {record_name, gateway},
+        {gateway, [
             {attributes, record_info(fields, gateway)},
             {disc_copies, [node()]}]},
-        {multicast_channels, [
-            {record_name, multicast_channel},
+        {multicast_channel, [
             {attributes, record_info(fields, multicast_channel)},
             {disc_copies, [node()]}]},
-        {profiles, [
-            {record_name, profile},
+        {network, [
+            {attributes, record_info(fields, network)},
+            {disc_copies, [node()]}]},
+        {group, [
+            {attributes, record_info(fields, group)},
+            {disc_copies, [node()]}]},
+        {profile, [
             {attributes, record_info(fields, profile)},
             {index, [app]},
             {disc_copies, [node()]}]},
-        {devices, [
-            {record_name, device},
+        {device, [
             {attributes, record_info(fields, device)},
             {index, [node]},
             {disc_copies, [node()]}]},
-        {nodes, [
-            {record_name, node},
+        {node, [
             {attributes, record_info(fields, node)},
             {index, [profile]},
             {disc_copies, [node()]}]},
-        {ignored_nodes, [
-            {record_name, ignored_node},
+        {ignored_node, [
             {attributes, record_info(fields, ignored_node)},
             {disc_copies, [node()]}]},
-        {pending, [
-            {record_name, pending},
-            {attributes, record_info(fields, pending)},
-            {disc_copies, [node()]}]},
-        {txframes, [
-            {type, ordered_set},
-            {record_name, txframe},
-            {attributes, record_info(fields, txframe)},
+        {queued, [
+            {attributes, record_info(fields, queued)},
             {index, [devaddr]},
             {disc_copies, [node()]}]},
-        {rxframes, [
-            {record_name, rxframe},
+        {pending, [
+            {attributes, record_info(fields, pending)},
+            {disc_copies, [node()]}]},
+        {rxframe, [
             {attributes, record_info(fields, rxframe)},
             {index, [devaddr]},
             {disc_copies, [node()]}]},
-        {connectors, [
-            {record_name, connector},
+        {connector, [
             {attributes, record_info(fields, connector)},
             {disc_copies, [node()]}]},
-        {handlers, [
-            {record_name, handler},
+        {handler, [
             {attributes, record_info(fields, handler)},
             {disc_copies, [node()]}]},
-        {events, [
-            {record_name, event},
+        {event, [
             {attributes, record_info(fields, event)},
             {disc_copies, [node()]}]}
     ]).
 
 ensure_table(Name, TabDef) ->
+    ensure_table(Name, TabDef, []).
+
+ensure_table(Name, TabDef, Renamed) ->
     case table_exists(Name) of
         true ->
-            ok = mnesia:wait_for_tables([Name], 2000),
-            ensure_indexes(Name, TabDef);
+            case have_disc_copy(Name) of
+                true ->
+                    case mnesia:wait_for_tables([Name], 2000) of
+                        ok ->
+                            ensure_indexes(Name, TabDef);
+                        _ ->
+                            ok
+                    end;
+                false ->
+                    % joining cluster
+                    {atomic, ok} = mnesia:add_table_copy(Name, node(), disc_copies)
+            end;
         false ->
-            case old_table_for(Name) of
-                undefined ->
-                    create_table(Name, TabDef);
-                OldName ->
-                    rename_table(OldName, Name, TabDef)
+            case lists:foldl(
+                fun
+                    (OldName, false) ->
+                        case table_exists(OldName) of
+                            true ->
+                                rename_table(OldName, Name, TabDef),
+                                true;
+                            false ->
+                                false
+                        end;
+                    (_, true) ->
+                        true
+                end,
+                false,
+                proplists:get_value(Name, Renamed, []))
+            of
+                true ->
+                    ok;
+                false ->
+                    create_table(Name, TabDef)
             end
+
     end.
 
 table_exists(Name) ->
     lists:member(Name, mnesia:system_info(tables)).
-
-table_if_exists(Name) ->
-    case table_exists(Name) of
-        true -> Name;
-        false -> undefined
-    end.
-
-old_table_for(multicast_channels) ->
-    table_if_exists(multicast_groups);
-old_table_for(nodes) ->
-    table_if_exists(links);
-old_table_for(ignored_nodes) ->
-    table_if_exists(ignored_links);
-old_table_for(_Else) ->
-    undefined.
 
 create_table(Name, TabDef) ->
     lager:info("Database create ~w", [Name]),
@@ -134,7 +165,7 @@ rename_table(OldName, Name, TabDef) ->
     ok = mnesia:wait_for_tables([OldName, Name], 2000),
     % copy data
     OldAttrs = mnesia:table_info(OldName, attributes),
-    NewRec = proplists:get_value(record_name, TabDef),
+    NewRec = proplists:get_value(record_name, TabDef, Name),
     NewAttrs = proplists:get_value(attributes, TabDef),
     lager:info("Database copy ~w ~w to ~w ~w", [OldName, OldAttrs, Name, NewAttrs]),
     lists:foreach(
@@ -218,6 +249,11 @@ get_value(handler, uplink_fields, PropList) ->
     get_value0(fields, uplink_fields, PropList);
 get_value(handler, parse_uplink, PropList) ->
     get_value0(parse, parse_uplink, PropList);
+%temporary until RELEASE 0.6
+get_value(site, area, PropList) ->
+    get_value0(group, area, PropList);
+get_value(yard, area, PropList) ->
+    get_value0(group, area, PropList);
 get_value(_Rec, X, PropList) ->
     proplists:get_value(X, PropList).
 
@@ -231,40 +267,76 @@ record_fields({rxq, Freq, DatR, CodR, Time, TmSt, Rssi, LSnr}) ->
 record_fields(Record) ->
     tl(tuple_to_list(Record)).
 
-set_defaults(users) ->
+set_defaults(config) ->
+    mnesia:dirty_write(#config{name= <<"main">>, items_per_page=30});
+set_defaults(user) ->
     lager:info("Database create default user:password"),
     {ok, {User, Pass}} = application:get_env(lorawan_server, http_admin_credentials),
-    mnesia:dirty_write(users, #user{
+    mnesia:dirty_write(#user{
         name=User,
         pass_ha1=lorawan_http_digest:ha1({User, ?REALM, Pass})});
-set_defaults(servers) ->
-    mnesia:dirty_write(servers, #server{sname=node(), router_perf=[]});
+set_defaults(server) ->
+    mnesia:dirty_write(#server{sname=node(), router_perf=[]});
 set_defaults(_Else) ->
     ok.
 
+foreach_record(Database, Keys, Fun) ->
+    lists:foreach(
+        fun(Key) ->
+            {atomic, ok} = mnesia:transaction(
+                fun() ->
+                    [Rec] = mnesia:read(Database, Key, write),
+                    Rec2 = Fun(Rec),
+                    if
+                        Rec2 /= Rec ->
+                            mnesia:write(Rec2);
+                        true ->
+                            ok
+                    end
+                end)
+        end, Keys).
 
+get_group(#node{profile=ProfName}) ->
+    case mnesia:dirty_read(profile, ProfName) of
+        [#profile{group=GrName}] ->
+            case mnesia:dirty_read(group, GrName) of
+                [Group] ->
+                    Group;
+                [] ->
+                    undefined
+            end;
+        [] ->
+            undefined
+    end.
+
+% returns two sorted lists {uplink frames, downlink frames}
 get_rxframes(DevAddr) ->
-    {_, Frames} = get_last_rxframes(DevAddr, 50),
-    % return frames received since the last device restart
-    case mnesia:dirty_read(nodes, DevAddr) of
-        [#node{last_reset=Reset}] when is_tuple(Reset) ->
-            lists:filter(
-                fun(Frame) -> occured_rxframe_after(Reset, Frame) end,
-                Frames);
-        _Else ->
-            Frames
+    lists:partition(
+        fun(#rxframe{dir=Dir}) ->
+            if
+                Dir == undefined; Dir == <<"up">>; Dir == <<"re-up">> -> true;
+                Dir == <<"down">>; Dir == <<"bcast">> -> false
+            end
+        end,
+        lists:sort(
+            fun(#rxframe{frid = A}, #rxframe{frid = B}) -> A =< B end,
+            mnesia:dirty_index_read(rxframe, DevAddr, #rxframe.devaddr))).
+
+join_cluster(NodeName) ->
+    lager:info("Joining mnesia cluster ~s", [NodeName]),
+    % WARNING: Side effects are possible when node statistics/ADR are updated
+    % Connect to node NodeName and get schema and tables from it
+    {ok, [NodeName]} = mnesia:change_config(extra_db_nodes, [NodeName]),
+    case lists:member(node(), mnesia:table_info(schema, disc_copies)) of
+        false ->
+            % Create disc copy of the schema, required before add_table_copy/3
+            {atomic, ok} = mnesia:change_table_copy_type(schema, node(), disc_copies),
+            ok;
+        true ->
+            ok
     end.
 
-occured_rxframe_after(StartDate, #rxframe{datetime = FrameDate}) ->
-    StartDate =< FrameDate.
-
-get_last_rxframes(DevAddr, Count) ->
-    Rec = mnesia:dirty_index_read(rxframes, DevAddr, #rxframe.devaddr),
-    SRec = lists:sort(fun(#rxframe{frid = A}, #rxframe{frid = B}) -> A < B end, Rec),
-    % split the list into expired and actual records
-    if
-        length(SRec) > Count -> lists:split(length(SRec)-Count, SRec);
-        true -> {[], SRec}
-    end.
+have_disc_copy(Table) ->
+    lists:member(node(), mnesia:table_info(Table, disc_copies)).
 
 % end of file

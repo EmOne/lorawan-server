@@ -23,7 +23,7 @@ init(Req, [Format]) ->
     {cowboy_rest, Req, #state{format=Format}}.
 
 is_authorized(Req, State) ->
-    lorawan_admin:handle_authorization(Req, State).
+    {lorawan_admin:handle_authorization(Req), Req, State}.
 
 allowed_methods(Req, State) ->
     {[<<"OPTIONS">>, <<"GET">>], Req, State}.
@@ -35,10 +35,10 @@ content_types_provided(Req, State) ->
 
 get_rxframe(Req, State) ->
     DevAddr = cowboy_req:binding(devaddr, Req),
-    ActRec = lorawan_db:get_rxframes(lorawan_utils:hex_to_binary(DevAddr)),
+    ActRec = get_last_rxframes(lorawan_utils:hex_to_binary(DevAddr)),
     case ActRec of
         [#rxframe{network=Name} | _] ->
-            case mnesia:dirty_read(networks, Name) of
+            case mnesia:dirty_read(network, Name) of
                 [N] ->
                     send_array(Req, N, DevAddr, ActRec, State);
                 [] ->
@@ -46,6 +46,25 @@ get_rxframe(Req, State) ->
             end;
         [] ->
             send_empty(Req, DevAddr, State)
+    end.
+
+get_last_rxframes(DevAddr) ->
+    {Uplinks0, _} = lorawan_db:get_rxframes(DevAddr),
+    Uplinks =
+        if
+            length(Uplinks0) =< 50 ->
+                Uplinks0;
+            true ->
+                lists:sublist(Uplinks0, length(Uplinks0)-50+1, 50)
+        end,
+    % return frames received since the last device restart
+    case mnesia:dirty_read(node, DevAddr) of
+        [#node{last_reset=Reset}] when is_tuple(Reset) ->
+            lists:filter(
+                fun(#rxframe{datetime=FrameDate}) -> FrameDate >= Reset end,
+                Uplinks);
+        _Else ->
+            Uplinks
     end.
 
 send_empty(Req, DevAddr, State) ->
@@ -110,8 +129,8 @@ send_array(Req, #network{}, DevAddr, ActRec, #state{format=qgraph}=State) ->
     {jsx:encode([{devaddr, DevAddr}, {array, Array}]), Req, State}.
 
 resource_exists(Req, State) ->
-    case mnesia:dirty_read(nodes,
-            lorawan_utils:hex_to_binary(cowboy_req:binding(devaddr, Req))) of
+    case mnesia:dirty_read(node,
+            lorawan_admin:parse_field(devaddr, cowboy_req:binding(devaddr, Req))) of
         [] -> {false, Req, State};
         [_Node] -> {true, Req, State}
     end.
