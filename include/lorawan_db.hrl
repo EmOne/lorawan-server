@@ -33,10 +33,41 @@
     time :: 'undefined' | 'immediately' | calendar:datetime(),
     powe :: 'undefined' | integer()}).
 
+-record(area, {
+    name :: nonempty_string(),
+    admins :: [nonempty_string()],
+    slack_channel :: 'undefined' | string(),
+    log_ignored :: boolean()}).
+
+-record(gateway, {
+    mac :: binary(),
+    area :: 'undefined' | nonempty_string(),
+    tx_rfch :: integer(), % rf chain for downlinks
+    ant_gain :: integer(), % antenna gain
+    desc :: 'undefined' | string(),
+    gpspos :: {number(), number()}, % {latitude, longitude}
+    gpsalt :: 'undefined' | number(), % altitude
+    ip_address :: {inet:ip_address(), inet:port_number(), integer()},
+    last_alive :: 'undefined' | calendar:datetime(),
+    last_gps :: 'undefined' | calendar:datetime(),
+    last_report :: 'undefined' | calendar:datetime(),
+    dwell :: [{calendar:datetime(), {number(), number(), number()}}], % {frequency, duration, hoursum}
+    delays :: [{calendar:datetime(), {integer(), integer(), integer()}}], % {min, avg, max}
+    health_alerts :: [atom()],
+    health_decay :: integer(),
+    health_reported :: integer(),
+    health_next :: 'undefined' | calendar:datetime()}).
+
+-record(multicast_channel, {
+    devaddr :: devaddr(), % multicast address
+    profiles :: [nonempty_string()],
+    nwkskey :: seckey(),
+    appskey :: seckey(),
+    fcntdown :: integer()}). % last downlink fcnt
+
 -record(network, {
     name :: nonempty_string(),
     netid :: binary(), % network id
-    subid :: 'undefined' | bitstring(), % sub-network id
     region :: binary(),
     tx_codr :: binary(),
     join1_delay :: integer(),
@@ -52,34 +83,19 @@
     init_chans :: intervals(),
     cflist :: 'undefined' | [{number(), integer(), integer()}]}).
 
--record(gateway, {
-    mac :: binary(),
-    group :: any(),
-    tx_rfch :: integer(), % rf chain for downlinks
-    ant_gain :: integer(), % antenna gain
-    desc :: 'undefined' | string(),
-    gpspos :: {number(), number()}, % {latitude, longitude}
-    gpsalt :: 'undefined' | number(), % altitude
-    ip_address :: {inet:ip_address(), inet:port_number(), integer()},
-    last_alive :: 'undefined' | calendar:datetime(),
-    last_gps :: 'undefined' | calendar:datetime(),
-    last_report :: 'undefined' | calendar:datetime(),
-    dwell :: [{calendar:datetime(), {number(), number(), number()}}], % {frequency, duration, hoursum}
-    delays :: [{calendar:datetime(), {integer(), integer(), integer()}}]}). % {min, avg, max}
-
--record(multicast_channel, {
-    devaddr :: devaddr(), % multicast address
-    profiles :: [nonempty_string()],
-    nwkskey :: seckey(),
-    appskey :: seckey(),
-    fcntdown :: integer()}). % last downlink fcnt
+-record(group, {
+    name :: nonempty_string(),
+    network :: nonempty_string(),
+    subid :: 'undefined' | bitstring(), % sub-network id
+    admins :: [nonempty_string()],
+    slack_channel :: 'undefined' | string(),
+    can_join :: boolean()}).
 
 -record(profile, {
     name :: nonempty_string(),
-    network :: nonempty_string(),
+    group :: nonempty_string(),
     app :: binary(),
     appid :: any(),
-    can_join :: boolean(),
     fcnt_check :: integer(),
     txwin :: integer(),
     adr_mode :: 0..2, % server requests
@@ -124,7 +140,11 @@
     average_qs :: 'undefined' | {number(), number()}, % average RSSI and SNR
     devstat_time :: 'undefined' | calendar:datetime(),
     devstat_fcnt :: 'undefined' | integer(),
-    devstat :: [devstat()]}). % {time, battery, margin, max_snr}
+    devstat :: [devstat()], % {time, battery, margin, max_snr}
+    health_alerts :: [atom()],
+    health_decay :: integer(),
+    health_reported :: integer(),
+    health_next :: 'undefined' | calendar:datetime()}).
 
 -record(ignored_node, {
     devaddr :: devaddr(),
@@ -167,23 +187,25 @@
     pending :: 'undefined' | boolean(),
     receipt :: any()}).
 
+-record(queued, {
+    frid :: frid(), % unique identifier
+    datetime :: calendar:datetime(),
+    devaddr :: devaddr(),
+    txdata :: #txdata{}}).
+
 -record(pending, {
     devaddr :: devaddr(),
     confirmed :: boolean(),
     phypayload :: binary(),
     receipt :: any()}).
 
--record(txframe, {
-    frid :: frid(), % unique identifier
-    datetime :: calendar:datetime(),
-    devaddr :: devaddr(),
-    txdata :: #txdata{}}).
-
 -record(rxframe, {
     frid :: frid(), % unique identifier
+    dir :: binary(),
     network :: nonempty_string(),
     app :: binary(),
     devaddr :: devaddr(),
+    appargs :: any(),
     gateways :: [{binary(), #rxq{}}], % singnal quality at each gateway
     average_qs :: 'undefined' | {number(), number()}, % average RSSI and SNR
     powe:: integer(),

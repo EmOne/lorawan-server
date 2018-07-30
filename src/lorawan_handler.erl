@@ -86,10 +86,15 @@ idle(cast, {frame, {MAC, RxQ, _}, PHYPayload}, Data) ->
                     {next_state, drop, Data}
             end;
         {ignore, Frame} ->
-            case mnesia:dirty_read(servers, node()) of
-                [#server{log_ignored=true}] ->
-                    {next_state, log_only, Frame};
-                _Else ->
+            case mnesia:dirty_read(gateway, MAC) of
+                [#gateway{area=AreaName}] ->
+                    case mnesia:dirty_read(area, AreaName) of
+                        [#area{log_ignored=true}] ->
+                            {next_state, log_only, Frame};
+                        _ ->
+                            {next_state, drop, Data}
+                    end;
+                _ ->
                     {next_state, drop, Data}
             end;
         {error, Error} ->
@@ -152,7 +157,7 @@ uplink(cast, {rxq, Gateways0}, {TimeStamp, {Network, Profile, Node},
             % else
             false
     end,
-    ok = mnesia:dirty_write(rxframes, build_rxframe(Gateways, {Network, Profile, Node2}, Frame)),
+    ok = mnesia:dirty_write(build_rxframe(<<"up">>, Gateways, {Network, Profile, Node2}, Frame)),
     TxQ = choose_tx({Network, Profile, Node2}, RxQ, TimeStamp),
     % invoke applications
     case invoke_handler(handle_rxq, {Network, Profile, Node2}, [Gateways, ShallReply, Frame, AppState]) of
@@ -189,15 +194,16 @@ choose_tx({#network{rx1_delay=Rx1Delay}=Network, _Profile, Node}, RxQ, TimeStamp
 
 send_unicast({MAC, GWState}, {Network, Profile, #node{devaddr=DevAddr}=Node}, TxQ, ACK, FOpts,
         #txdata{confirmed=Confirmed, receipt=Receipt}=TxData) ->
-    {ok, PHYPayload} = lorawan_mac:encode_unicast({Network, Profile, Node}, ACK, FOpts, TxData),
+    {ok, Node2, PHYPayload} = lorawan_mac:encode_unicast({Network, Profile, Node}, ACK, FOpts, TxData),
     % we are about to overwrite the pending frame for this device
     case mnesia:dirty_read(pending, DevAddr) of
         [#pending{confirmed=true, receipt=Receipt}] ->
             lorawan_utils:throw_error({node, DevAddr}, downlink_expired),
-            invoke_handler(handle_delivery, {Network, Profile, Node}, [lost, Receipt]);
+            invoke_handler(handle_delivery, {Network, Profile, Node2}, [lost, Receipt]);
         _Else ->
             ok
     end,
+    ok = mnesia:dirty_write(build_rxframe(<<"down">>, MAC, {Network, Profile, Node2}, TxData)),
     ok = mnesia:dirty_write(pending,
         #pending{devaddr=DevAddr, confirmed=Confirmed, phypayload=PHYPayload, receipt=Receipt}),
     lorawan_gw_router:downlink({MAC, GWState}, Network, DevAddr, TxQ, PHYPayload);
@@ -210,7 +216,7 @@ retransmit(cast, {rxq, Gateways0}, {TimeStamp, {Network, Profile, Node}, Frame, 
     {MAC, RxQ, GWState} = hd(Gateways0),
     Gateways = extract_rxq(Gateways0),
     % we want to see retransmissions too
-    ok = mnesia:dirty_write(rxframes, build_rxframe(Gateways, {Network, Profile, Node}, Frame)),
+    ok = mnesia:dirty_write(build_rxframe(<<"re-up">>, Gateways, {Network, Profile, Node}, Frame)),
     TxQ = lorawan_mac_region:rx2_window(Network, Node, RxQ),
     %% FIXME: this is an emergency bugfix; we need choose RX2 for some retransmissions
     %% TxQ = choose_tx({Network, Profile, Node}, RxQ, TimeStamp),
@@ -221,7 +227,7 @@ retransmit(cast, {rxq, Gateways0}, {TimeStamp, {Network, Profile, Node}, Frame, 
 log_only(cast, {rxq, Gateways0}, #frame{conf=Confirm, devaddr=DevAddr, fcnt=FCnt, port=Port}) ->
     Gateways = extract_rxq(Gateways0),
     % log ignored frames too
-    ok = mnesia:dirty_write(rxframes,
+    ok = mnesia:dirty_write(
         #rxframe{frid= <<(erlang:system_time()):64>>, gateways=Gateways, devaddr=DevAddr,
             fcnt=FCnt, confirm=bit_to_bool(Confirm), port=Port,
             datetime=calendar:universal_time()}),
@@ -270,42 +276,60 @@ downlink(#node{profile=ProfID}=Node, Time, TxData) ->
     send_unicast({MAC, undefined}, {Network, Profile, Node}, TxQ#txq{time=Time}, 0,
         lorawan_mac_commands:build_fopts({Network, Profile, Node}, []), TxData).
 
-multicast(#multicast_channel{devaddr=DevAddr, profiles=Profiles}, Time, #txdata{confirmed=false} = TxData) ->
+multicast(#multicast_channel{devaddr=DevAddr, profiles=Profiles}=Channel, Time, #txdata{confirmed=false} = TxData) ->
     % must be unconfirmed, ACK=0, no MAC commands allowed
-    {ok, PHYPayload} = lorawan_mac:encode_multicast(DevAddr, TxData),
+    {ok, _, PHYPayload} = lorawan_mac:encode_multicast(DevAddr, TxData),
     lists:foreach(
-        fun(Prof) ->
-            [Profile] = mnesia:dirty_read(profiles, Prof),
-            multicast(DevAddr, Profile, Time, PHYPayload)
+        fun(ProfName) ->
+            [#profile{group=GroupName}=Profile] = mnesia:dirty_read(profile, ProfName),
+            [#group{network=NetName}] = mnesia:dirty_read(group, GroupName),
+            [Network] = mnesia:dirty_read(network, NetName),
+            Gateways = mac_for_profile(ProfName),
+            ok = mnesia:dirty_write(build_rxframe(<<"bcast">>, Gateways, {Network, Profile, Channel}, TxData)),
+            TxQ = lorawan_mac_region:rx2_rf(Network, Profile),
+            lists:foreach(
+                fun(MAC) ->
+                    lorawan_gw_router:downlink({MAC, undefined},
+                        Network, DevAddr, TxQ#txq{time=Time}, PHYPayload)
+                end,
+                Gateways)
         end,
         Profiles);
 multicast(#multicast_channel{devaddr=DevAddr}, _Time, #txdata{confirmed=true}) ->
     lorawan_utils:throw_error({multicast_channel, DevAddr}, confirmed_not_allowed).
 
-multicast(DevAddr, #profile{name=Prof, network=Net}=Profile, Time, PHYPayload) ->
-    [Network] = mnesia:dirty_read(networks, Net),
-    TxQ = lorawan_mac_region:rx2_rf(Network, Profile),
-    lists:foreach(
-        fun(MAC) ->
-            lorawan_gw_router:downlink({MAC, undefined}, Network, DevAddr, TxQ#txq{time=Time}, PHYPayload)
-        end,
-        lists:usort(
-            lists:map(
-                fun(Gateway) ->
-                    {MAC2, _RxQ} = hd(Gateway),
-                    MAC2
-                end,
-                mnesia:dirty_select(nodes, [{#node{profile='$1', gateways='$2', _='_'},
-                    [{'==', '$1', Prof}], ['$2']}])
-    ))).
+mac_for_profile(ProfName) ->
+    lists:usort(
+        lists:map(
+            fun(Gateway) ->
+                {MAC2, _RxQ} = hd(Gateway),
+                MAC2
+            end,
+            mnesia:dirty_select(node, [{#node{profile='$1', gateways='$2', _='_'},
+                [{'==', '$1', ProfName}], ['$2']}]))).
 
-build_rxframe(Gateways, {#network{name=NetName}, #profile{app=App},
-        #node{fcntup=FCnt, average_qs=AverageQs, adr_use={TXPower, _, _}}},
+build_rxframe(Dir, Gateways, {#network{name=NetName}, #profile{app=App},
+        #node{appargs=AppArgs, fcntup=FCnt, average_qs=AverageQs, adr_use={TXPower, _, _}}},
         #frame{conf=Confirm, devaddr=DevAddr, port=Port, data=Data}) ->
-    % #rxframe{frid, gateways, average_qs, app, region, devaddr, powe, fcnt, confirm, port, data, datetime}
-    #rxframe{frid= <<(erlang:system_time()):64>>, gateways=Gateways,
-        average_qs=AverageQs, network=NetName, app=App, devaddr=DevAddr, powe=TXPower,
+    % #rxframe{frid, dir, network, app, devaddr, appargs, gateways, average_qs, powe, fcnt, confirm, port, data, datetime}
+    #rxframe{frid= <<(erlang:system_time()):64>>, dir=Dir, network=NetName,
+        app=App, devaddr=DevAddr, appargs=AppArgs, gateways=Gateways,
+        average_qs=AverageQs, powe=TXPower,
         fcnt=FCnt, confirm=bit_to_bool(Confirm), port=Port, data=Data,
+        datetime=calendar:universal_time()};
+build_rxframe(Dir, MAC, {#network{name=NetName}, #profile{app=App},
+        #node{appargs=AppArgs, devaddr=DevAddr, fcntdown=FCnt}},
+        #txdata{confirmed=Confirm, port=Port, data=Data}) ->
+    #rxframe{frid= <<(erlang:system_time()):64>>, dir=Dir, network=NetName,
+        app=App, devaddr=DevAddr, appargs=AppArgs, gateways=[{MAC, #rxq{}}],
+        fcnt=FCnt, confirm=Confirm, port=Port, data=Data,
+        datetime=calendar:universal_time()};
+build_rxframe(Dir, MAC, {#network{name=NetName}, #profile{app=App},
+        #multicast_channel{devaddr=DevAddr, fcntdown=FCnt}},
+        #txdata{confirmed=Confirm, port=Port, data=Data}) ->
+    #rxframe{frid= <<(erlang:system_time()):64>>, dir=Dir, network=NetName,
+        app=App, devaddr=DevAddr, gateways=[{M, #rxq{}} || M <- MAC],
+        fcnt=FCnt, confirm=Confirm, port=Port, data=Data,
         datetime=calendar:universal_time()}.
 
 bit_to_bool(0) -> false;

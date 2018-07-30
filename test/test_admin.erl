@@ -5,10 +5,13 @@
 %
 -module(test_admin).
 
--export([add_gateway/1, add_network/1, add_profile/2, add_node/2]).
+-export([add_area/1, add_gateway/2, add_network/1, add_group/2, add_profile/2, add_node/2]).
 
-add_gateway(MAC) ->
-    post_json("gateways", [{mac, lorawan_utils:binary_to_hex(MAC)},
+add_area(AreaName) ->
+    post_json("areas", [{name, AreaName}]).
+
+add_gateway(AreaName, MAC) ->
+    post_json("gateways", [{mac, lorawan_utils:binary_to_hex(MAC)}, {area, AreaName},
         {tx_rfch, 0}, {gpspos, [{lat, 0}, {lon, 0}]}, {gpsalt, 0}]).
 
 add_network(NetName) ->
@@ -18,8 +21,11 @@ add_network(NetName) ->
         {gw_power, 16}, {max_eirp, 16},
         {rxwin_init, [{rx1_dr_offset, 0}, {rx2_dr, 0}, {rx2_freq, 869.525}]}]).
 
-add_profile(NetName, ProfName) ->
-    post_json("profiles", [{name, ProfName}, {network, NetName}, {app, <<"semtech-mote">>},
+add_group(NetName, GroupName) ->
+    post_json("groups", [{name, GroupName}, {network, NetName}]).
+
+add_profile(GroupName, ProfName) ->
+    post_json("profiles", [{name, ProfName}, {group, GroupName}, {app, <<"semtech-mote">>},
         {fcnt_check, undefined}, {adr_mode, 0}]).
 
 add_node(ProfName, {DevAddr, NwkSKey, AppSKey}) ->

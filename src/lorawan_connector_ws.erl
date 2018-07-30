@@ -60,25 +60,30 @@ validate([])->
     ok.
 
 validate0(app, App) ->
-    case mnesia:dirty_read(handlers, App) of
+    case mnesia:dirty_read(handler, App) of
         [#handler{}] ->
             ok;
         _Else ->
             {error, {unknown_application, App}}
     end;
 validate0(deveui, DevEUI) ->
-    case mnesia:dirty_read(devices, DevEUI) of
+    case mnesia:dirty_read(device, DevEUI) of
         [#device{}] ->
             ok;
         _Else ->
             {error, {unknown_deveui, lorawan_utils:binary_to_hex(DevEUI)}}
     end;
 validate0(devaddr, DevAddr) ->
-    case mnesia:dirty_read(nodes, DevAddr) of
+    case mnesia:dirty_read(node, DevAddr) of
         [#node{}] ->
             ok;
         _Else ->
-            {error, {unknown_devaddr, lorawan_utils:binary_to_hex(DevAddr)}}
+            case mnesia:dirty_read(multicast_channel, DevAddr) of
+                [#multicast_channel{}] ->
+                    ok;
+                _Else ->
+                    {error, {unknown_devaddr, lorawan_utils:binary_to_hex(DevAddr)}}
+            end
     end;
 validate0(_Else, _) ->
     ok.

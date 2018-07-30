@@ -30,10 +30,9 @@ The server Dashboard shows:
    frames received.
 
 The following configuration pages are available:
- - **Users** contain a list of user identities that can manage the server. For now
-   only the `admin` *Role* is defined.
+ - [**Server**](Server.md) configuration and monitoring.
  - [**Infrastructure**](Infrastructure.md) covers configuration of LoRa Gateways,
-   Multicast Channels and the list of Ignored Nodes.
+   Networks and Multicast Channels.
  - [**Devices**](Devices.md) cover the entire device configuration:
    - **Commissioned** contain a list of devices that are allowed to join using
      the over-the-air-activation (OTAA).
@@ -79,8 +78,8 @@ The following REST resources are made available:
   /api/nodes/*123*              | GET, PUT, DELETE | Active network node with DevAddr=*123*
   /api/ignored_nodes            | GET, POST        | Nodes ignored by the server
   /api/ignored_nodes/*123*      | GET, PUT, DELETE | Ignored node with DevAddr=*123*
-  /api/txframes                 | GET              | Frames scheduled for transmission
-  /api/txframes/*123*           | GET, DELETE      | Frame with ID=*123*
+  /api/queued                   | GET              | Frames queued for transmission
+  /api/queued/*123*             | GET, DELETE      | Queued frame with ID=*123*
   /api/rxframes                 | GET              | Recent received frames
   /api/handlers                 | GET              | Backend handlers
   /api/handlers/*ABC*           | GET, DELETE      | Backend handler for the Group *ABC*

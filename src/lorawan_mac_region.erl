@@ -46,7 +46,8 @@ rx1_rf(Region, RxQ, Offset) ->
 
 rx2_rf(#network{region=Region, tx_codr=CodingRate}, #node{rxwin_use={_, DataRate, Freq}}) ->
     #txq{freq=Freq, datr=dr_to_datar(Region, DataRate), codr=CodingRate};
-rx2_rf(#network{region=Region, tx_codr=CodingRate}, #profile{rxwin_set={_, DataRate, Freq}}) ->
+rx2_rf(#network{region=Region, tx_codr=CodingRate, rxwin_init=WinInit}, #profile{rxwin_set=WinSet}) ->
+    {_, DataRate, Freq} = lorawan_mac_commands:merge_rxwin(WinSet, WinInit),
     #txq{freq=Freq, datr=dr_to_datar(Region, DataRate), codr=CodingRate}.
 
 f2ch(Freq, {Start, Inc}) -> round(10*Freq-Start) div Inc.
@@ -159,19 +160,15 @@ us_down_datars() -> [
     {13, {7, 500}}].
 
 dr_to_tuple(Region, DR) ->
-    case lists:keyfind(DR, 1, datars(Region)) of
-        {_, DataRate} -> DataRate;
-        false -> undefined
-    end.
+    {_, DataRate} = lists:keyfind(DR, 1, datars(Region)),
+    DataRate.
 
 dr_to_datar(Region, DR) ->
     tuple_to_datar(dr_to_tuple(Region, DR)).
 
 datar_to_dr(Region, DataRate) ->
-    case lists:keyfind(datar_to_tuple(DataRate), 2, datars(Region)) of
-        {DR, _} -> DR;
-        false -> undefined
-    end.
+    {DR, _} = lists:keyfind(datar_to_tuple(DataRate), 2, datars(Region)),
+    DR.
 
 tuple_to_datar({SF, BW}) ->
     <<"SF", (integer_to_binary(SF))/binary, "BW", (integer_to_binary(BW))/binary>>;

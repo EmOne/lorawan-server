@@ -20,7 +20,7 @@ init(Req, []) ->
     {cowboy_rest, Req, undefined}.
 
 is_authorized(Req, State) ->
-    lorawan_admin:handle_authorization(Req, State).
+    {lorawan_admin:handle_authorization(Req), Req, State}.
 
 allowed_methods(Req, State) ->
     {[<<"OPTIONS">>, <<"GET">>], Req, State}.
@@ -48,21 +48,21 @@ get_timeline(Req, State) ->
                     {start, StartTime},
                     {'end', EndTime}]
         end,
-        mnesia:dirty_select(events, [{#event{evid='$1', first_rx='$2', last_rx='$3', _='_'},
+        mnesia:dirty_select(event, [{#event{evid='$1', first_rx='$2', last_rx='$3', _='_'},
             select_datetime(Start, End, '$2', '$3'), ['$_']}])),
     RxFrames = lists:map(
-        fun({Id, DevAddr, DateTime, Port, Data}) ->
+        fun(#rxframe{frid=Id, dir=Dir, devaddr=DevAddr, datetime=DateTime, port=Port, data=Data}) ->
             [{id, lorawan_utils:binary_to_hex(Id)},
                 {className,
                     case Data of
                         undefined -> <<"info">>;
-                        _Else -> <<"node">>
+                        _Else -> Dir
                     end},
                 {content, addr_port(DevAddr, Port)},
                 {start, DateTime}]
         end,
-        mnesia:dirty_select(rxframes, [{#rxframe{frid='$1', devaddr='$2', datetime='$3', port='$4', data='$5', _='_'},
-            select_datetime(Start, End, '$3', '$3'), [{{'$1', '$2', '$3', '$4', '$5'}}]}])),
+        mnesia:dirty_select(rxframe, [{#rxframe{datetime='$1', _='_'},
+            select_datetime(Start, End, '$1', '$1'), ['$_']}])),
     {jsx:encode([{items, Events++RxFrames}]), Req, State}.
 
 addr_port(DevAddr, undefined) ->

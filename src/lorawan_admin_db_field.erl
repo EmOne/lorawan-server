@@ -31,7 +31,7 @@ init0(Req, Table, Fields, Module) ->
         field=Field, fidx=lorawan_utils:index_of(Field, Fields), module=Module}}.
 
 is_authorized(Req, State) ->
-    lorawan_admin:handle_authorization(Req, State).
+    {lorawan_admin:handle_authorization(Req), Req, State}.
 
 allowed_methods(Req, State) ->
     {[<<"OPTIONS">>, <<"GET">>, <<"PUT">>, <<"DELETE">>], Req, State}.
@@ -75,12 +75,12 @@ delete_resource(Req, State) ->
     {atomic, ok} = update_record(undefined, State),
     {true, Req, State}.
 
-update_record(Value, #state{table=Table, key=Key, fidx=Idx}) ->
+update_record(Value, #state{table=Table, key=Key, fidx=Idx, module=Module}) ->
     mnesia:transaction(
         fun() ->
             [Rec] = mnesia:read(Table, Key, write),
             Rec2 = setelement(Idx+1, Rec, Value),
-            mnesia:write(Table, Rec2, write)
+            apply(Module, write, [Rec2])
         end).
 
 % end of file

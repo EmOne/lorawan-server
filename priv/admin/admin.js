@@ -7,18 +7,24 @@ var myApp = angular.module('myApp', ['ng-admin', 'uiGmapgoogle-maps', 'googlecha
 myApp.config(['NgAdminConfigurationProvider', function (nga) {
     var admin = nga.application('Server Admin').baseApiUrl('/api/');
 
+    var config = nga.entity('config')
+        .identifier(nga.field('name'));
     var servers = nga.entity('servers')
         .identifier(nga.field('sname'));
     var applications = nga.entity('applications')
         .identifier(nga.field('name'));
     var users = nga.entity('users')
         .identifier(nga.field('name'));
+    var areas = nga.entity('areas')
+        .identifier(nga.field('name'));
     var gateways = nga.entity('gateways')
         .identifier(nga.field('mac'));
-    var networks = nga.entity('networks')
-        .identifier(nga.field('name'));
     var multicast_channels = nga.entity('multicast_channels')
         .identifier(nga.field('devaddr'));
+    var networks = nga.entity('networks')
+        .identifier(nga.field('name'));
+    var groups = nga.entity('groups')
+        .identifier(nga.field('name'));
     var profiles = nga.entity('profiles')
         .identifier(nga.field('name'));
     var devices = nga.entity('devices')
@@ -27,7 +33,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         .identifier(nga.field('devaddr'));
     var ignored_nodes = nga.entity('ignored_nodes')
         .identifier(nga.field('devaddr'));
-    var txframes = nga.entity('txframes')
+    var queued = nga.entity('queued')
         .identifier(nga.field('frid'));
     var rxframes = nga.entity('rxframes')
         .identifier(nga.field('frid'))
@@ -84,6 +90,27 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         { value: 10, label: 'Max - 20 dB' }
     ];
 
+    // ---- config
+    config.editionView().fields([
+        // General
+        nga.field('admin_url').label('Admin URL'),
+        nga.field('items_per_page', 'number'),
+        nga.field('google_api_key').label('Google API Key'),
+        nga.field('slack_token'),
+        // E-Mail
+        nga.field('email_from').label('From'),
+        nga.field('email_server').label('SMTP Server'),
+        nga.field('email_user').label('User'),
+        nga.field('email_password','password').label('Password')
+    ])
+    .actions([]);
+    config.editionView().template(editWithTabsTemplate([
+        {name:"General", min:0, max:4},
+        {name:"E-Mail", min:4, max:8}
+    ]));
+    // add to the admin application
+    admin.addEntity(config);
+
     // ---- servers
     servers.listView().fields([
         nga.field('sname').label('Name').isDetailLink(true),
@@ -97,10 +124,10 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     .batchActions([]);
     servers.editionView().fields([
         // General
+        nga.field('sname').label('Name')
+            .editable(false),
         nga.field('modules.lorawan_server').label('Version')
             .editable(false),
-        nga.field('log_ignored', 'boolean').label('Log Ignored?')
-            .defaultValue(true),
         // Status
         nga.field('health_alerts', 'choices').label('Alerts')
             .editable(false),
@@ -128,7 +155,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     users.listView().fields([
         nga.field('name').isDetailLink(true),
         nga.field('roles', 'choices').label('Roles')
-            .choices(role_choices)
+            .choices(role_choices),
+        nga.field('email').label('E-Mail'),
+        nga.field('send_alerts', 'boolean')
     ]);
     users.creationView().fields([
         nga.field('name')
@@ -136,16 +165,43 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('pass', 'password').label('Password'),
         nga.field('roles', 'choices').label('Roles')
             .choices(role_choices)
+            .validation({ required: true }),
+        nga.field('email').label('E-Mail')
+            .validation({ pattern: '[^@\s]+@[^@\s]+\.[^@\s]+' }),
+        nga.field('send_alerts', 'boolean')
             .validation({ required: true })
+            .defaultValue(true)
     ]);
     users.editionView().fields(users.creationView().fields());
     // add to the admin application
     admin.addEntity(users);
 
+    // ---- areas
+    areas.listView().fields([
+        nga.field('name').isDetailLink(true),
+        nga.field('log_ignored', 'boolean').label('Log Ignored?')
+    ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination);
+
+    areas.creationView().fields([
+        nga.field('name')
+            .validation({ required: true }),
+        nga.field('admins', 'reference_many').label('Administrators')
+            .targetEntity(users)
+            .targetField(nga.field('name')),
+        nga.field('slack_channel'),
+        nga.field('log_ignored', 'boolean').label('Log Ignored?')
+            .defaultValue(true)
+    ]);
+    areas.editionView().fields(areas.creationView().fields());
+    // add to the admin application
+    admin.addEntity(areas);
+
     // ---- gateways
     gateways.listView().fields([
         nga.field('mac').label('MAC').isDetailLink(true),
-        nga.field('group'),
+        nga.field('area'),
         nga.field('desc').label('Description'),
         nga.field('ip_address.ip').label('IP Address'),
         nga.field('dwell', 'float').label('Dwell [%]')
@@ -154,6 +210,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('health_decay', 'number').label('Status')
             .template(function(entry){ return healthIndicator(entry.values) })
     ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination)
     .sortField('health_decay')
     .sortDir('DESC');
 
@@ -164,7 +222,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 return value.replace(/[-:]/g, '')
             })
             .validation({ required: true, pattern: '[A-Fa-f0-9]{2}([-:]?[A-Fa-f0-9]{2}){7}' }),
-        nga.field('group'),
+        nga.field('area', 'reference')
+            .targetEntity(areas)
+            .targetField(nga.field('name')),
         nga.field('tx_rfch', 'number').label('TX Chain')
             .attributes({ placeholder: 'e.g. 0' })
             .validation({ required: true })
@@ -205,10 +265,10 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     networks.listView().fields([
         nga.field('name').isDetailLink(true),
         nga.field('netid').label('NetID'),
-        nga.field('subid').label('SubID')
-            .map(format_bitstring),
         nga.field('region')
-    ]);
+    ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination);
     networks.creationView().fields([
         // General
         nga.field('name')
@@ -216,11 +276,6 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('netid').label('NetID')
             .attributes({ placeholder: 'e.g. 0123AB' })
             .validation({ required: true, pattern: '[A-Fa-f0-9]{6}' }),
-        nga.field('subid').label('SubID')
-            .map(format_bitstring)
-            .transform(parse_bitstring)
-            .attributes({ placeholder: 'e.g. 0:3' })
-            .validation({ pattern: '([A-Fa-f0-9]{2})*:[0-9]+', validator: validate_bitstring }),
         nga.field('region', 'choice')
             .choices([
                 { value: 'EU868', label: 'EU 863-870MHz' },
@@ -338,6 +393,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('profiles', 'choices'),
         nga.field('fcntdown', 'number').label('FCnt Down')
     ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination)
     .sortField('devaddr')
     .sortDir('ASC');
 
@@ -362,18 +419,54 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     // add to the admin application
     admin.addEntity(multicast_channels);
 
-    // ---- profiles
-    profiles.listView().fields([
+    // ---- groups
+    groups.listView().fields([
         nga.field('name').isDetailLink(true),
         nga.field('network'),
-        nga.field('app').label('Application'),
-        nga.field('appid').label('App Identifier')
-    ]);
-    profiles.creationView().fields([
+        nga.field('subid').label('SubID')
+            .map(format_bitstring),
+        nga.field('can_join', 'boolean').label('Can Join?')
+    ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination);
+
+    groups.creationView().fields([
         nga.field('name')
             .validation({ required: true }),
         nga.field('network', 'reference')
             .targetEntity(networks)
+            .targetField(nga.field('name'))
+            .validation({ required: true }),
+        nga.field('subid').label('SubID')
+            .map(format_bitstring)
+            .transform(parse_bitstring)
+            .attributes({ placeholder: 'e.g. 0:3' })
+            .validation({ pattern: '([A-Fa-f0-9]{2})*:[0-9]+', validator: validate_bitstring }),
+        nga.field('admins', 'reference_many').label('Administrators')
+            .targetEntity(users)
+            .targetField(nga.field('name')),
+        nga.field('slack_channel'),
+        nga.field('can_join', 'boolean').label('Can Join?')
+            .defaultValue(true)
+    ]);
+    groups.editionView().fields(groups.creationView().fields());
+    // add to the admin application
+    admin.addEntity(groups);
+
+    // ---- profiles
+    profiles.listView().fields([
+        nga.field('name').isDetailLink(true),
+        nga.field('group'),
+        nga.field('app').label('Application'),
+        nga.field('appid').label('App Identifier')
+    ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination);
+    profiles.creationView().fields([
+        nga.field('name')
+            .validation({ required: true }),
+        nga.field('group', 'reference')
+            .targetEntity(groups)
             .targetField(nga.field('name'))
             .validation({ required: true }),
         nga.field('app', 'reference').label('Application')
@@ -381,8 +474,6 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .targetField(nga.field('name'))
             .validation({ required: true }),
         nga.field('appid').label('App Identifier'),
-        nga.field('can_join', 'boolean').label('Can Join?')
-            .defaultValue(true),
         nga.field('fcnt_check', 'choice').label('FCnt Check')
             .choices(fcnt_choices)
             .defaultValue(0), // Strict 16-bit
@@ -436,8 +527,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .then(response => { choices_networks = response.data });
     }]);
     profiles.creationView().template(createWithTabsTemplate([
-        {name:"General", min:0, max:7},
-        {name:"ADR", min:7, max:16}
+        {name:"General", min:0, max:6},
+        {name:"ADR", min:6, max:15}
     ]));
     profiles.editionView().fields(profiles.creationView().fields())
     .prepare(['$http', function($http) {
@@ -445,8 +536,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .then(response => { choices_networks = response.data });
     }]);
     profiles.editionView().template(editWithTabsTemplate([
-        {name:"General", min:0, max:7},
-        {name:"ADR", min:7, max:16}
+        {name:"General", min:0, max:6},
+        {name:"ADR", min:6, max:15}
     ]));
     // add to the admin application
     admin.addEntity(profiles);
@@ -462,6 +553,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .targetEntity(nodes)
             .targetField(nga.field('devaddr'))
     ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination)
     .sortField('deveui')
     .sortDir('ASC');
     devices.listView().filters([
@@ -514,6 +607,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('health_decay', 'number').label('Status')
             .template(function(entry){ return healthIndicator(entry.values) })
     ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination)
     .sortField('health_decay')
     .sortDir('DESC');
     nodes.listView().filters([
@@ -586,7 +681,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             ])
             .editable(false),
         nga.field('downlinks', 'referenced_list')
-            .targetEntity(txframes)
+            .targetEntity(queued)
             .targetReferenceField('devaddr')
             .targetFields([
                 nga.field('datetime', 'datetime').label('Creation Time'),
@@ -669,13 +764,15 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     ]));
     // add to the admin application
     admin.addEntity(nodes);
-    admin.addEntity(txframes);
+    admin.addEntity(queued);
 
     // ---- ignored nodes
     ignored_nodes.listView().fields([
         nga.field('devaddr').label('DevAddr').isDetailLink(true),
         nga.field('mask')
     ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination)
     .sortField('devaddr')
     .sortDir('ASC');
 
@@ -692,15 +789,18 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     admin.addEntity(ignored_nodes);
 
     // ---- rxframes
-    rxframes.listView().title('Received Frames')
+    rxframes.listView().title('Frames')
         .batchActions([]);
     rxframes.listView().fields([
-        nga.field('datetime', 'datetime').label('Received'),
+        nga.field('dir')
+            .template(function(entry){ return dirIndicator(entry.values) }),
+        nga.field('datetime', 'datetime').label('Time'),
         nga.field('app').label('Application'),
         nga.field('devaddr').label('DevAddr')
             .template(function(entry) {
                 return "<a href='#/nodes/edit/" + entry.values.devaddr + "'>" + entry.values.devaddr + "</a>";
             }),
+        nga.field('appargs').label('Args'),
         nga.field('mac').label('MAC')
             .map(function(value, entry) {
                 return array_slice_mac(entry.gateways);
@@ -731,11 +831,22 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                     return "<div title='[ASCII] " + hextoascii(entry.values.data) + "'>" + entry.values.data + "</div>"
             })
     ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination)
     .sortField('datetime');
     rxframes.listView().filters([
+        nga.field('dir', 'choice')
+            .choices([
+                { value: 'up', label: 'up' },
+                { value: 're-up', label: 're-up' },
+                { value: 'down', label: 'down' },
+                { value: 'bcast', label: 'bcast' }
+            ]),
         nga.field('app').label('Application'),
         nga.field('devaddr').label('DevAddr')
-            .validation({ pattern: '[A-Fa-f0-9]{8}' })
+            .validation({ pattern: '[A-Fa-f0-9]{8}' }),
+        nga.field('appargs').label('App Arguments'),
+        nga.field('port', 'number')
     ]);
     // add to the admin application
     admin.addEntity(rxframes);
@@ -751,7 +862,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('received').label('Received Topic'),
         nga.field('enabled', 'boolean'),
         nga.field('failed', 'choices')
-    ]);
+    ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination);
     connectors.creationView().fields([
         nga.field('connid').label('Connector Name')
             .validation({ required: true }),
@@ -808,7 +921,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('uplink_fields', 'choices'),
         nga.field('payload'),
         nga.field('downlink_expires').label('D/L Expires')
-    ]);
+    ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination);
     handlers.creationView().fields([
         nga.field('app').label('Application')
             .validation({ required: true }),
@@ -894,6 +1009,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('text', 'wysiwyg'),
         nga.field('args', 'wysiwyg')
     ])
+    .perPage(ItemsPerPage)
+    .infinitePagination(InfinitePagination)
     .sortField('last_rx')
     .listActions('<eventbtn entry="entry"></eventbtn>');
     events.listView().filters([
@@ -980,9 +1097,11 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .sortField('last_rx')
             .perPage(7)
         )
-        .addCollection(nga.collection(rxframes).title('Received Frames')
+        .addCollection(nga.collection(rxframes).title('Frames')
             .fields([
-                nga.field('datetime', 'datetime').label('Received'),
+                nga.field('dir')
+                    .template(function(entry){ return dirIndicator(entry.values) }),
+                nga.field('datetime', 'datetime').label('Time'),
                 nga.field('app').label('Application'),
                 nga.field('devaddr').label('DevAddr')
                     .template(function(entry) {
@@ -1012,15 +1131,23 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
 
     // ---- menu
     admin.menu(nga.menu()
-        .addChild(nga.menu(users).icon('<span class="fa fa-user fa-fw"></span>'))
+        .addChild(nga.menu().title('Server').icon('<span class="fa fa-server fa-fw"></span>')
+            .addChild(nga.menu(users).icon('<span class="fa fa-user fa-fw"></span>'))
+            .addChild(nga.menu(servers).icon('<span class="fa fa-desktop fa-fw"></span>'))
+            .addChild(nga.menu()
+                .title('Configuration')
+                .link('/config/edit/main')
+                .icon('<span class="fa fa-cog fa-fw"></span>'))
+            .addChild(nga.menu(events).icon('<span class="fa fa-exclamation-triangle fa-fw"></span>'))
+        )
         .addChild(nga.menu().title('Infrastructure').icon('<span class="fa fa-sitemap fa-fw"></span>')
-            .addChild(nga.menu(servers).icon('<span class="fa fa-server fa-fw"></span>'))
+            .addChild(nga.menu(areas).icon('<span class="fa fa-street-view fa-fw"></span>'))
             .addChild(nga.menu(gateways).icon('<span class="fa fa-wifi fa-fw"></span>'))
             .addChild(nga.menu(networks).icon('<span class="fa fa-cloud fa-fw"></span>'))
             .addChild(nga.menu(multicast_channels).icon('<span class="fa fa-bullhorn fa-fw"></span>'))
-            .addChild(nga.menu(events).icon('<span class="fa fa-exclamation-triangle fa-fw"></span>'))
         )
         .addChild(nga.menu().title('Devices').icon('<span class="fa fa-cubes fa-fw"></span>')
+            .addChild(nga.menu(groups).icon('<span class="fa fa-th fa-fw"></span>'))
             .addChild(nga.menu(profiles).title('Profiles').icon('<span class="fa fa-pencil-square-o fa-fw"></span>'))
             .addChild(nga.menu(devices).title('Commissioned').icon('<span class="fa fa-cube fa-fw"></span>'))
             .addChild(nga.menu(nodes).title('Activated (Nodes)').icon('<span class="fa fa-rss fa-fw"></span>'))
@@ -1035,7 +1162,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .addChild(nga.menu(handlers).icon('<span class="fa fa-cogs fa-fw"></span>'))
             .addChild(nga.menu(connectors).icon('<span class="fa fa-bolt fa-fw"></span>'))
         )
-        .addChild(nga.menu(rxframes).title('Received Frames').icon('<span class="fa fa-comments fa-fw"></span>'))
+        .addChild(nga.menu(rxframes).title('Frames').icon('<span class="fa fa-comments fa-fw"></span>'))
         .autoClose(false);
 
     admin.dashboard()
@@ -1046,30 +1173,37 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
 }]);
 
 function map_memstats(value, entry) {
-    return bytesToSize(entry['memory.free_memory']);
+    if ('memory.free_memory' in entry)
+        return bytesToSize(entry['memory.free_memory']);
 }
 
 function map_memstats_p(value, entry) {
-    var free = 100 * entry['memory.free_memory'] / entry['memory.total_memory'];
-    return bytesToSize(entry['memory.free_memory']) + " (" + free.toFixed(0) + "%)";
+    if ('memory.free_memory' in entry) {
+        var free = 100 * entry['memory.free_memory'] / entry['memory.total_memory'];
+        return bytesToSize(entry['memory.free_memory']) + " (" + free.toFixed(0) + "%)";
+    }
 }
 
 function map_diskstats(value, entry) {
-    var root = entry['disk'].filter(function(obj) {
-        return (obj.id === "/");
-    });
-    if(root.length > 0)
-        return bytesToSize(1024*root[0].size_kb * (100-root[0].percent_used)/100);
+    if ('disk' in entry) {
+        var root = entry['disk'].filter(function(obj) {
+            return (obj.id === "/");
+        });
+        if(root.length > 0)
+            return bytesToSize(1024*root[0].size_kb * (100-root[0].percent_used)/100);
+    }
 }
 
 function map_diskstats_p(value, entry) {
-    var root = entry['disk'].filter(function(obj) {
-        return (obj.id === "/");
-    });
-    if(root.length > 0)
-    {
-        var free = 100-root[0].percent_used;
-        return bytesToSize(1024*root[0].size_kb * free/100) + " (" + free.toFixed(0) + "%)";
+    if ('disk' in entry) {
+        var root = entry['disk'].filter(function(obj) {
+            return (obj.id === "/");
+        });
+        if(root.length > 0)
+        {
+            var free = 100-root[0].percent_used;
+            return bytesToSize(1024*root[0].size_kb * free/100) + " (" + free.toFixed(0) + "%)";
+        }
     }
 }
 
@@ -1081,16 +1215,16 @@ function bytesToSize(bytes) {
 }
 
 function array_slice_mac(array) {
-    if(Array.isArray(array))
-        return array.map( x => x['mac'].toString() );
+    if(Array.isArray(array) && array.length > 0)
+        return array.map( x => ('mac' in x) ? x['mac'].toString() : ' ');
     else
-        return [];
+        return [' '];
 }
 function array_slice_rxq(array, slice) {
-    if(Array.isArray(array))
-        return array.map( x => x['rxq'][slice].toString() );
+    if(Array.isArray(array) && array.length > 0)
+        return array.map( x => ('rxq' in x) && (slice in x['rxq']) ? x['rxq'][slice].toString() : ' ');
     else
-        return [];
+        return [' '];
 }
 function format_mac_array(array) {
     return array.map(mac => '<a href="#/gateways/edit/' + mac + '">' + mac + '</a>' ).join('<br>');
@@ -1280,6 +1414,19 @@ function healthIndicator(values) {
         return '';
 }
 
+function dirIndicator(values) {
+    switch (values.dir) {
+        case "up":
+            return '<span class="fa fa-arrow-up fa-fw" title="up"></span>';
+        case "down":
+            return '<span class="fa fa-arrow-down fa-fw" title="down"></span>';
+        case "bcast":
+            return '<span class="fa fa-arrows fa-fw" title="bcast"></span>';
+        default:
+            return '';
+    }
+}
+
 myApp.decorator('HttpErrorService', ['$delegate', '$translate', 'notification',
 function($delegate, $translate, notification) {
     $delegate.handleDefaultError = function(error) {
@@ -1402,7 +1549,7 @@ return {
 
 myApp.config(function (uiGmapGoogleMapApiProvider) {
     uiGmapGoogleMapApiProvider.configure({
-        key: GoogleMapsKey,
+        key: GoogleAPIKey,
         v: '3',
         libraries: 'visualization'
     });
