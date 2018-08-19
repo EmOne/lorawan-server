@@ -79,6 +79,7 @@
     max_power :: integer(),
     min_power :: integer(),
     max_datr :: number(),
+    dcycle_init :: integer(),
     rxwin_init :: rxwin_config(),
     init_chans :: intervals(),
     cflist :: 'undefined' | [{number(), integer(), integer()}]}).
@@ -101,6 +102,7 @@
     adr_mode :: 0..2, % server requests
     adr_set :: adr_config(), % requested after join
     max_datr :: 'undefined' | number(),
+    dcycle_set :: integer(),
     rxwin_set :: rxwin_config(), % requested
     request_devstat :: boolean()}).
 
@@ -123,6 +125,7 @@
     nwkskey :: seckey(),
     appskey :: seckey(),
     desc :: 'undefined' | string(),
+    location :: 'undefined' | string(),
     fcntup :: 'undefined' | integer(), % last uplink fcnt
     fcntdown :: integer(), % last downlink fcnt
     first_reset :: calendar:datetime(),
@@ -134,6 +137,7 @@
     adr_set :: 'undefined' | adr_config(), % auto-calculated
     adr_use :: adr_config(), % used
     adr_failed=[] :: [binary()], % last request failed
+    dcycle_use :: integer(),
     rxwin_use :: rxwin_config(), % used
     rxwin_failed=[] :: [binary()], % last request failed
     last_qs :: [{integer(), integer()}], % list of {RSSI, SNR} tuples
@@ -166,7 +170,11 @@
     name :: 'undefined' | binary(),
     pass :: 'undefined' | binary(),
     certfile :: 'undefined' | binary(),
-    keyfile :: 'undefined' | binary()}).
+    keyfile :: 'undefined' | binary(),
+    health_alerts :: [atom()],
+    health_decay :: integer(),
+    health_reported :: integer(),
+    health_next :: 'undefined' | calendar:datetime()}).
 
 -define(EMPTY_PATTERN, {<<>>,[]}).
 
@@ -205,7 +213,7 @@
     network :: nonempty_string(),
     app :: binary(),
     devaddr :: devaddr(),
-    appargs :: any(),
+    location :: any(),
     gateways :: [{binary(), #rxq{}}], % singnal quality at each gateway
     average_qs :: 'undefined' | {number(), number()}, % average RSSI and SNR
     powe:: integer(),

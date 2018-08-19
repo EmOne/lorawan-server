@@ -5,8 +5,10 @@
  */
 var myApp = angular.module('myApp', ['ng-admin', 'uiGmapgoogle-maps', 'googlechart', 'ngVis', 'colorpicker.module']);
 myApp.config(['NgAdminConfigurationProvider', function (nga) {
-    var admin = nga.application('Server Admin').baseApiUrl('/api/');
+    var admin = nga.application(NodeName+' Admin').baseApiUrl('/api/');
 
+    var scopes = nga.entity('scopes')
+        .identifier(nga.field('name'));
     var config = nga.entity('config')
         .identifier(nga.field('name'));
     var servers = nga.entity('servers')
@@ -47,10 +49,6 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     var events = nga.entity('events')
         .identifier(nga.field('evid'));
 
-    role_choices = [
-        { value: 'admin', label: 'admin' }
-    ];
-
     adr_choices = [
         { value: 0, label: 'Disabled' },
         { value: 1, label: 'Auto-Adjust' },
@@ -90,6 +88,25 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         { value: 10, label: 'Max - 20 dB' }
     ];
 
+    dcycle_choices = [
+        { value: 0, label: '1 (100%)' },
+        { value: 1, label: '1/2 (50%)' },
+        { value: 2, label: '1/4 (25%)' },
+        { value: 3, label: '1/8 (12.5%)' },
+        { value: 4, label: '1/16 (6.25%)' },
+        { value: 5, label: '1/32 (3.125%)' },
+        { value: 6, label: '1/64 (1.563%)' },
+        { value: 7, label: '1/128 (0.781%)' },
+        { value: 8, label: '1/256 (0.391%)' },
+        { value: 9, label: '1/512 (0.195%)' },
+        { value: 10, label: '1/1024 (0.098%)' },
+        { value: 11, label: '1/2048 (0.049%)' },
+        { value: 12, label: '1/4096 (0.024%)' },
+        { value: 13, label: '1/8192 (0.012%)' },
+        { value: 14, label: '1/16384 (0.006%)' },
+        { value: 15, label: '1/32768 (0.003%)' }
+    ];
+
     // ---- config
     config.editionView().fields([
         // General
@@ -116,12 +133,17 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('sname').label('Name').isDetailLink(true),
         nga.field('modules.lorawan_server').label('Version'),
         nga.field('memory').label('Free Memory')
-            .map(map_memstats_p),
+            .map(map_diskstats),
         nga.field('disk').label('Free Disk')
-            .map(map_diskstats_p),
+            .map(map_diskstats),
         nga.field('health_alerts', 'choices').label('Alerts')
     ])
     .batchActions([]);
+    servers.creationView().title('Join Remote Node to Cluster')
+    .description('Database on the node you enter will be DELETED, then it will be attached to this server!')
+    .fields([
+        nga.field('sname').label('Name')
+    ]);
     servers.editionView().fields([
         // General
         nga.field('sname').label('Name')
@@ -134,7 +156,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('sname', 'template').label('Performance')
             .template('<sgraph value="value"></sgraph>'),
         nga.field('memory').label('Free Memory')
-            .map(map_memstats_p)
+            .map(map_diskstats)
             .editable(false),
         nga.field('disk', 'embedded_list').label('Disks')
             .targetFields([
@@ -154,8 +176,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     // ---- users
     users.listView().fields([
         nga.field('name').isDetailLink(true),
-        nga.field('roles', 'choices').label('Roles')
-            .choices(role_choices),
+        nga.field('scopes', 'choices'),
         nga.field('email').label('E-Mail'),
         nga.field('send_alerts', 'boolean')
     ]);
@@ -163,8 +184,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('name')
             .validation({ required: true }),
         nga.field('pass', 'password').label('Password'),
-        nga.field('roles', 'choices').label('Roles')
-            .choices(role_choices)
+        nga.field('scopes', 'reference_many')
+            .targetEntity(scopes)
+            .targetField(nga.field('name'))
             .validation({ required: true }),
         nga.field('email').label('E-Mail')
             .validation({ pattern: '[^@\s]+@[^@\s]+\.[^@\s]+' }),
@@ -242,9 +264,12 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .editable(false),
         nga.field('ip_address.ip').label('IP Address')
             .editable(false),
-        nga.field('last_alive', 'datetime'),
-        nga.field('last_gps', 'datetime').label('Last GPS'),
-        nga.field('last_report', 'datetime'),
+        nga.field('last_alive', 'datetime')
+            .editable(false),
+        nga.field('last_gps', 'datetime').label('Last GPS')
+            .editable(false),
+        nga.field('last_report', 'datetime')
+            .editable(false),
         nga.field('mac', 'template').label('Network Delay')
             .template('<pgraph value="value"></pgraph>'),
         nga.field('mac', 'template').label('Transmissions')
@@ -339,7 +364,12 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                     return [];
             })
             .validation({ required: true }),
+        nga.field('dcycle_init', 'choice').label('Initial Duty Cycle')
+            .choices(dcycle_choices)
+            .attributes({ placeholder: 'e.g. 100%' })
+            .defaultValue(0),
         nga.field('rxwin_init.rx1_dr_offset', 'number').label('Initial RX1 DR Offset')
+            .attributes({ placeholder: 'e.g. 0' })
             .validation({ required: true })
             .defaultValue(0),
         nga.field('rxwin_init.rx2_dr', 'choice').label('Initial RX2 DR')
@@ -369,8 +399,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .then(response => { choices_regions = response.data });
     }]);
     networks.creationView().template(createWithTabsTemplate([
-        {name:"General", min:0, max:10},
-        {name:"ADR", min:10, max:17},
+        {name:"General", min:0, max:9},
+        {name:"ADR", min:9, max:17},
         {name:"Channels", min:17, max:19}
     ]));
     networks.editionView().fields(networks.creationView().fields())
@@ -379,8 +409,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .then(response => { choices_regions = response.data });
     }]);
     networks.editionView().template(editWithTabsTemplate([
-        {name:"General", min:0, max:10},
-        {name:"ADR", min:10, max:17},
+        {name:"General", min:0, max:9},
+        {name:"ADR", min:9, max:17},
         {name:"Channels", min:17, max:19}
     ]));
     // add to the admin application
@@ -485,22 +515,22 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .defaultValue(0),
         nga.field('adr_set.power', 'choice').label('Set Power')
             .choices(function(entry) {
-                if(entry.values.network)
-                    return choices_networks[entry.values.network].power;
+                if(entry.values.group)
+                    return choices_groups[entry.values.group].power;
                 else
                     return [];
             }),
         nga.field('adr_set.datr', 'choice').label('Set Data Rate')
             .choices(function(entry) {
-                if(entry.values.network)
-                    return choices_networks[entry.values.network].uplink_datar;
+                if(entry.values.group)
+                    return choices_groups[entry.values.group].uplink_datar;
                 else
                     return [];
             }),
         nga.field('max_datr', 'choice').label('Max Data Rate')
             .choices(function(entry) {
-                if(entry.values.network)
-                    return choices_networks[entry.values.network].uplink_datar;
+                if(entry.values.group)
+                    return choices_groups[entry.values.group].uplink_datar;
                 else
                     return [];
             }),
@@ -508,11 +538,15 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .attributes({ placeholder: 'e.g. 0-2' })
             .validation({ pattern: '[0-9]+(-[0-9]+)?(,[ ]*[0-9]+(-[0-9]+)?)*' }),
 
-        nga.field('rxwin_set.rx1_dr_offset', 'number').label('Set RX1 DR Offset'),
+        nga.field('dcycle_set', 'choice').label('Set Duty Cycle')
+            .choices(dcycle_choices)
+            .attributes({ placeholder: 'e.g. 100%' }),
+        nga.field('rxwin_set.rx1_dr_offset', 'number').label('Set RX1 DR Offset')
+            .attributes({ placeholder: 'e.g. 0' }),
         nga.field('rxwin_set.rx2_dr', 'choice').label('Set RX2 DR')
             .choices(function(entry) {
-                if(entry.values.network)
-                    return choices_networks[entry.values.network].downlink_datar;
+                if(entry.values.group)
+                    return choices_groups[entry.values.group].downlink_datar;
                 else
                     return [];
             }),
@@ -523,21 +557,21 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .defaultValue(true)
     ])
     .prepare(['$http', function($http) {
-        return $http.get('/api/choices/networks')
-            .then(response => { choices_networks = response.data });
+        return $http.get('/api/choices/groups')
+            .then(response => { choices_groups = response.data });
     }]);
     profiles.creationView().template(createWithTabsTemplate([
         {name:"General", min:0, max:6},
-        {name:"ADR", min:6, max:15}
+        {name:"ADR", min:6, max:16}
     ]));
     profiles.editionView().fields(profiles.creationView().fields())
     .prepare(['$http', function($http) {
-        return $http.get('/api/choices/networks')
-            .then(response => { choices_networks = response.data });
+        return $http.get('/api/choices/groups')
+            .then(response => { choices_groups = response.data });
     }]);
     profiles.editionView().template(editWithTabsTemplate([
         {name:"General", min:0, max:6},
-        {name:"ADR", min:6, max:15}
+        {name:"ADR", min:6, max:16}
     ]));
     // add to the admin application
     admin.addEntity(profiles);
@@ -595,8 +629,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('profile', 'reference')
             .targetEntity(profiles)
             .targetField(nga.field('name')),
-        nga.field('appargs').label('App Arguments'),
+        nga.field('appargs').label('Args'),
         nga.field('desc').label('Description'),
+        nga.field('location'),
         nga.field('fcntup', 'number').label('FCnt Up'),
         nga.field('fcntdown', 'number').label('FCnt Down'),
         nga.field('battery', 'number')
@@ -627,6 +662,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .targetField(nga.field('name'))
             .validation({ required: true }),
         nga.field('appargs').label('App Arguments'),
+        nga.field('location'),
         nga.field('nwkskey').label('NwkSKey')
             .attributes({ placeholder: 'e.g. FEDCBA9876543210FEDCBA9876543210' })
             .validation({ required: true, pattern: '[A-Fa-f0-9]{32}' }),
@@ -640,7 +676,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .validation({ required: true })
     ]);
     nodes.creationView().template(createWithTabsTemplate([
-        {name:"General", min:0, max:8}
+        {name:"General", min:0, max:9}
     ]));
 
     nodes.editionView().fields([
@@ -653,6 +689,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .targetField(nga.field('name'))
             .validation({ required: true }),
         nga.field('appargs').label('App Arguments'),
+        nga.field('location'),
         nga.field('nwkskey').label('NwkSKey')
             .attributes({ placeholder: 'e.g. FEDCBA9876543210FEDCBA9876543210' })
             .validation({ required: true, pattern: '[A-Fa-f0-9]{32}' }),
@@ -722,6 +759,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 { value: 'channel_mask', label: 'channel_mask' }
             ]),
 
+        nga.field('dcycle_use', 'choice').label('Used Duty Cycle')
+            .choices(dcycle_choices)
+            .editable(false),
         nga.field('rxwin_use.rx1_dr_offset', 'number').label('Used RX1 DR Offset')
             .editable(false),
         nga.field('rxwin_use.rx2_dr', 'choice').label('Used RX2 DR')
@@ -758,9 +798,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .then(response => { choices_profiles = response.data });
     }]);
     nodes.editionView().template(editWithTabsTemplate([
-        {name:"General", min:0, max:13},
-        {name:"ADR", min:13, max:25},
-        {name:"Status", min:25, max:29}
+        {name:"General", min:0, max:14},
+        {name:"ADR", min:14, max:27},
+        {name:"Status", min:27, max:31}
     ]));
     // add to the admin application
     admin.addEntity(nodes);
@@ -796,11 +836,11 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .template(function(entry){ return dirIndicator(entry.values) }),
         nga.field('datetime', 'datetime').label('Time'),
         nga.field('app').label('Application'),
+        nga.field('location'),
         nga.field('devaddr').label('DevAddr')
             .template(function(entry) {
                 return "<a href='#/nodes/edit/" + entry.values.devaddr + "'>" + entry.values.devaddr + "</a>";
             }),
-        nga.field('appargs').label('Args'),
         nga.field('mac').label('MAC')
             .map(function(value, entry) {
                 return array_slice_mac(entry.gateways);
@@ -843,9 +883,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 { value: 'bcast', label: 'bcast' }
             ]),
         nga.field('app').label('Application'),
+        nga.field('location'),
         nga.field('devaddr').label('DevAddr')
             .validation({ pattern: '[A-Fa-f0-9]{8}' }),
-        nga.field('appargs').label('App Arguments'),
         nga.field('port', 'number')
     ]);
     // add to the admin application
@@ -861,10 +901,13 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('publish_uplinks'),
         nga.field('received').label('Received Topic'),
         nga.field('enabled', 'boolean'),
-        nga.field('failed', 'choices')
+        nga.field('health_decay', 'number').label('Status')
+            .template(function(entry){ return healthIndicator(entry.values) })
     ])
     .perPage(ItemsPerPage)
-    .infinitePagination(InfinitePagination);
+    .infinitePagination(InfinitePagination)
+    .sortField('health_decay')
+    .sortDir('DESC');
     connectors.creationView().fields([
         nga.field('connid').label('Connector Name')
             .validation({ required: true }),
@@ -876,7 +919,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .validation({ required: true }),
         nga.field('uri').label('URI')
             .attributes({ placeholder: 'e.g. mqtt://server:8883' })
-            .validation({ required: true, pattern: '^(((amqp|mqtt|http)s?:\/\/[^\/?#]+[^?#]*)|ws:|mongodb:\/\/[^\/?#]+)' }),
+            .validation({ required: true, pattern: '^(http:|((amqp|mqtt|http)s?:\/\/[^\/?#]+[^?#]*)|ws:|mongodb:\/\/[^\/?#]+)' }),
         nga.field('publish_uplinks'),
         nga.field('publish_events'),
         nga.field('subscribe').label('Subscribe'),
@@ -894,6 +937,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('auth', 'choice')
             .choices([
                 { value: 'normal', label: 'Username+Password' },
+                { value: 'token', label: 'Header+Token' },
                 { value: 'sas', label: 'Shared Access Signature' }
             ]),
         nga.field('name'),
@@ -1041,7 +1085,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 nga.field('sname').label('Name').isDetailLink(true),
                 nga.field('modules.lorawan_server').label('Version'),
                 nga.field('memory').label('Memory')
-                    .map(map_memstats),
+                    .map(map_diskstats),
                 nga.field('disk').label('Disk')
                     .map(map_diskstats),
                 nga.field('health_decay', 'number').label('Status')
@@ -1073,6 +1117,20 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 nga.field('margin', 'number').label('D/L SNR')
                     .map(function(value, entry) { return first(entry.devstat, 'margin') }),
                 nga.field('last_rx', 'datetime').label('Last RX'),
+                nga.field('health_decay', 'number').label('Status')
+                    .template(function(entry){ return healthIndicator(entry.values) })
+            ])
+            .sortField('health_decay')
+            .sortDir('DESC')
+            .perPage(7)
+        )
+        .addCollection(nga.collection(connectors)
+            .fields([
+                nga.field('connid').label('Name').isDetailLink(true),
+                nga.field('app', 'reference').label('Application')
+                    .targetEntity(handlers)
+                    .targetField(nga.field('app')),
+                nga.field('uri').label('URI'),
                 nga.field('health_decay', 'number').label('Status')
                     .template(function(entry){ return healthIndicator(entry.values) })
             ])
@@ -1126,8 +1184,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .perPage(7)
         )
     );
-    var dashLeft = ['servers', 'gateways', 'nodes'];
-    var dashRight = ['events', 'rxframes'];
+    var dashLeft = ['servers', 'events', 'rxframes'];
+    var dashRight = ['gateways', 'nodes', 'connectors'];
 
     // ---- menu
     admin.menu(nga.menu()
@@ -1172,12 +1230,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     nga.configure(admin);
 }]);
 
-function map_memstats(value, entry) {
-    if ('memory.free_memory' in entry)
-        return bytesToSize(entry['memory.free_memory']);
-}
-
-function map_memstats_p(value, entry) {
+function map_diskstats(value, entry) {
     if ('memory.free_memory' in entry) {
         var free = 100 * entry['memory.free_memory'] / entry['memory.total_memory'];
         return bytesToSize(entry['memory.free_memory']) + " (" + free.toFixed(0) + "%)";
@@ -1185,16 +1238,6 @@ function map_memstats_p(value, entry) {
 }
 
 function map_diskstats(value, entry) {
-    if ('disk' in entry) {
-        var root = entry['disk'].filter(function(obj) {
-            return (obj.id === "/");
-        });
-        if(root.length > 0)
-            return bytesToSize(1024*root[0].size_kb * (100-root[0].percent_used)/100);
-    }
-}
-
-function map_diskstats_p(value, entry) {
     if ('disk' in entry) {
         var root = entry['disk'].filter(function(obj) {
             return (obj.id === "/");

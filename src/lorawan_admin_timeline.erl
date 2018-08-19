@@ -6,8 +6,9 @@
 -module(lorawan_admin_timeline).
 
 -export([init/2]).
--export([is_authorized/2]).
 -export([allowed_methods/2]).
+-export([is_authorized/2]).
+-export([forbidden/2]).
 -export([content_types_provided/2]).
 -export([resource_exists/2]).
 
@@ -15,15 +16,24 @@
 
 -include("lorawan.hrl").
 -include("lorawan_db.hrl").
+-record(state, {scopes, auth_fields}).
 
-init(Req, []) ->
-    {cowboy_rest, Req, undefined}.
-
-is_authorized(Req, State) ->
-    {lorawan_admin:handle_authorization(Req), Req, State}.
+init(Req, Scopes) ->
+    {cowboy_rest, Req, #state{scopes=Scopes}}.
 
 allowed_methods(Req, State) ->
     {[<<"OPTIONS">>, <<"GET">>], Req, State}.
+
+is_authorized(Req, #state{scopes=Scopes}=State) ->
+    case lorawan_admin:handle_authorization(Req, Scopes) of
+        {true, AuthFields} ->
+            {true, Req, State#state{auth_fields=AuthFields}};
+        Else ->
+            {Else, Req, State}
+    end.
+
+forbidden(Req, #state{auth_fields=AuthFields}=State) ->
+    {lorawan_admin:fields_empty(AuthFields), Req, State}.
 
 content_types_provided(Req, State) ->
     {[
@@ -81,6 +91,8 @@ select_datetime(WStart, WEnd, EStart, EEnd) ->
 
 title(#event{entity=Entity, eid=undefined}=Event) ->
     [io_lib:print(Entity), "<br\>", title0(Event)];
+title(#event{entity=Entity, eid=EID}=Event) when is_atom(EID) ->
+    [io_lib:print(Entity), " ", atom_to_list(EID), "<br\>", title0(Event)];
 title(#event{entity=Entity, eid=EID}=Event) ->
     [io_lib:print(Entity), " ", lorawan_utils:binary_to_hex(EID), "<br\>", title0(Event)].
 

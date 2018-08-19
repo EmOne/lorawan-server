@@ -6,30 +6,40 @@
 -module(lorawan_admin_choices).
 
 -export([init/2]).
--export([is_authorized/2]).
 -export([allowed_methods/2]).
+-export([is_authorized/2]).
+-export([forbidden/2]).
 -export([content_types_provided/2]).
 -export([resource_exists/2]).
 
 -export([handle_get/2]).
 
 -include("lorawan_db.hrl").
+-record(state, {name, scopes, auth_fields}).
 
-init(Req, Opts) ->
-    {cowboy_rest, Req, Opts}.
-
-is_authorized(Req, Opts) ->
-    {lorawan_admin:handle_authorization(Req), Req, Opts}.
+init(Req, {Name, Scopes}) ->
+    {cowboy_rest, Req, #state{name=Name, scopes=Scopes}}.
 
 allowed_methods(Req, Opts) ->
     {[<<"OPTIONS">>, <<"GET">>], Req, Opts}.
 
-content_types_provided(Req, Opts) ->
+is_authorized(Req, #state{scopes=Scopes}=State) ->
+    case lorawan_admin:handle_authorization(Req, Scopes) of
+        {true, AuthFields} ->
+            {true, Req, State#state{auth_fields=AuthFields}};
+        Else ->
+            {Else, Req, State}
+    end.
+
+forbidden(Req, #state{auth_fields=AuthFields}=State) ->
+    {lorawan_admin:fields_empty(AuthFields), Req, State}.
+
+content_types_provided(Req, State) ->
     {[
         {{<<"application">>, <<"json">>, []}, handle_get}
-    ], Req, Opts}.
+    ], Req, State}.
 
-handle_get(Req, regions=Opts) ->
+handle_get(Req, #state{name=regions}=State) ->
     Regs =
         lists:map(
             fun(Region) ->
@@ -41,37 +51,44 @@ handle_get(Req, regions=Opts) ->
             [<<"EU868">>, <<"CN779">>, <<"EU433">>, <<"AS923">>, <<"CN470">>,
             <<"KR920">>, <<"IN865">>, <<"RU868">>,
             <<"US902">>, <<"US902-PR">>, <<"AU915">>]),
-    {jsx:encode(Regs), Req, Opts};
-handle_get(Req, networks=Opts) ->
+    {jsx:encode(Regs), Req, State};
+handle_get(Req, #state{name=groups}=State) ->
     Nets =
         lists:map(
-            fun(Net) ->
-                {Net, network_choices(Net)}
+            fun(Group) ->
+                {Group, group_choices(Group)}
             end,
-            mnesia:dirty_all_keys(network)),
-    {jsx:encode(Nets), Req, Opts};
-handle_get(Req, profiles=Opts) ->
+            mnesia:dirty_all_keys(group)),
+    {jsx:encode(Nets), Req, State};
+handle_get(Req, #state{name=profiles}=State) ->
     Profs =
         lists:map(
             fun(Prof) ->
                 [#profile{group=Group}] = mnesia:dirty_read(profile, Prof),
-                case mnesia:dirty_read(group, Group) of
-                    [#group{network=Net}] when is_binary(Net), byte_size(Net) > 0 ->
-                        {Prof, network_choices(Net)};
-                    _Else ->
-                        {Prof, []}
-                end
+                {Prof, group_choices(Group)}
             end,
             mnesia:dirty_all_keys(profile)),
-    {jsx:encode(Profs), Req, Opts}.
+    {jsx:encode(Profs), Req, State}.
+
+group_choices(Group) ->
+    case mnesia:dirty_read(group, Group) of
+        [#group{network=Net}] when is_binary(Net), byte_size(Net) > 0 ->
+            network_choices(Net);
+        _Else ->
+            []
+    end.
 
 network_choices(Net) ->
-    [#network{region=Region, max_eirp=Max, min_power=Min}] = mnesia:dirty_read(network, Net),
-    [
-        {uplink_datar, uplink_datar_choices0(Region)},
-        {downlink_datar, downlink_datar_choices0(Region)},
-        {power, power_choices0(0, Max, Min)}
-    ].
+    case mnesia:dirty_read(network, Net) of
+        [#network{region=Region, max_eirp=Max, min_power=Min}] ->
+            [
+                {uplink_datar, uplink_datar_choices0(Region)},
+                {downlink_datar, downlink_datar_choices0(Region)},
+                {power, power_choices0(0, Max, Min)}
+            ];
+        _Else ->
+            []
+    end.
 
 uplink_datar_choices0(Region) ->
     if
