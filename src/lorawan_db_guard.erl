@@ -13,6 +13,7 @@
 
 -export([check_alive/1, check_dwell/1]).
 -export([check_reset/1, check_battery/1, check_margin/1, check_adr/1, check_rxwin/1]).
+-export([check_failed/1]).
 
 -include("lorawan.hrl").
 -include("lorawan_db.hrl").
@@ -22,7 +23,6 @@ start_link() ->
 
 init([]) ->
     ok = mnesia:wait_for_tables([node], 2000),
-    {ok, _} = mnesia:subscribe({table, server, simple}),
     {ok, _} = mnesia:subscribe({table, node, simple}),
     {ok, _} = timer:send_interval(1000, monitor),
     {ok, _} = timer:send_interval(3600*1000, trim_tables),
@@ -34,8 +34,8 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({mnesia_table_event, {delete, {Tab, Key}, _Id}}, State) ->
-    handle_delete(Tab, Key),
+handle_info({mnesia_table_event, {delete, {node, DevAddr}, _Id}}, State) ->
+    node_deleted(DevAddr),
     {noreply, State};
 handle_info(monitor, State) ->
     lorawan_db:foreach_record(gateway,
@@ -100,6 +100,29 @@ update_health(#node{devaddr=DevAddr,
             ok
     end,
     Node#node{health_alerts=Alerts, health_decay=Decay, health_reported=Reported, health_next=MinNext};
+update_health(#connector{connid=ConnId, app=AppId,
+        health_alerts=Alerts0, health_reported=Reported0} = Connector) ->
+    {Reports, Alerts, Decay, Reported, MinNext} =
+        check_health(Connector, Alerts0, Reported0,
+            ?MODULE, [check_failed]),
+    case Reports of
+        {NewAlerts, OtherAlerts} ->
+            AffectedGroups =
+                lists:usort(
+                    [Gr || #profile{group=Gr} <- mnesia:dirty_index_read(profile, AppId, #profile.app)]),
+            lists:foreach(
+                fun(Group) ->
+                    case mnesia:dirty_read(group, Group) of
+                        #group{admins=Admins, slack_channel=Channel} ->
+                            send_alert(Admins, Channel, "connector", ConnId, NewAlerts, OtherAlerts, Decay);
+                        _Else ->
+                            ok
+                    end
+                end, AffectedGroups);
+        undefined ->
+            ok
+    end,
+    Connector#connector{health_alerts=Alerts, health_decay=Decay, health_reported=Reported, health_next=MinNext};
 update_health(Else) ->
     Else.
 
@@ -150,6 +173,8 @@ check_health0(Rec, Module, Funs) ->
                         {Alerts, MinNext};
                     {Alert, Decay} ->
                         {[{Alert, Decay} | Alerts], MinNext};
+                    MoreAlerts when is_list(MoreAlerts) ->
+                        {MoreAlerts++Alerts, MinNext};
                     {Alert, Decay, Next} when MinNext == undefined; Next < MinNext ->
                         {[{Alert, Decay} | Alerts], Next};
                     {Alert, Decay, _Next} ->
@@ -272,8 +297,16 @@ send_emails0(ToAddrs, Type, ID, Message, Warning) ->
         end).
 
 send_slack(Channel, Type, ID, Message, Warning) ->
+    case catch send_slack_message(Channel, Type, ID, Message, Warning) of
+        true ->
+            ok;
+        Else ->
+            lager:error("Cannot send Slack message: ~p", [Else])
+    end.
+
+send_slack_message(Channel, Type, ID, Message, Warning) ->
     [#config{admin_url=Prefix, slack_token=Token}] = mnesia:dirty_read(config, <<"main">>),
-    case catch send_slack_message(
+    send_slack_raw(
         Token, Channel,
         list_to_binary([titlecase(Type), " <", stringify_url(Prefix, Type, ID), "|", ID, ">", Message,
             if
@@ -281,15 +314,11 @@ send_slack(Channel, Type, ID, Message, Warning) ->
                     " :warning:";
                 true ->
                     []
-            end]))
-    of
-        true ->
-            ok;
-        Else ->
-            lager:error("Cannot send Slack message: ~p", [Else])
-    end.
+            end])).
 
-send_slack_message(Token, Channel, Message) ->
+send_slack_raw(undefined, _Channel, _Message) ->
+    {error, token_undefined};
+send_slack_raw(Token, Channel, Message) ->
     {ok, {Host, Port}} = application:get_env(lorawan_server, slack_server),
     {ok, ConnPid} = gun:open(Host, Port, #{transport=>ssl}),
     {ok, _} = gun:await_up(ConnPid),
@@ -389,17 +418,19 @@ check_rxwin(#node{rxwin_failed=Failed}) when Failed == undefined; Failed == [] -
 check_rxwin(#node{}) ->
     {<<"rxparamsetup_failed">>, 25}.
 
+check_failed(#connector{enabled=true, failed=Empty}) when Empty == undefined; Empty == [] ->
+    ok;
+check_failed(#connector{enabled=true, failed=[_|_]}) ->
+    {<<"failed">>, 100};
+check_failed(#connector{enabled=false}) ->
+    undefined.
 
-handle_delete(node, DevAddr) ->
+node_deleted(DevAddr) ->
     lager:debug("Node ~p deleted", [lorawan_utils:binary_to_hex(DevAddr)]),
     % delete linked records
     ok = mnesia:dirty_delete(pending, DevAddr),
     delete_matched(queued, #queued{frid='$1', devaddr=DevAddr, _='_'}),
-    delete_matched(rxframe, #rxframe{frid='$1', devaddr=DevAddr, _='_'});
-handle_delete(server, Node) ->
-    {atomic, ok} = mnesia:del_table_copy(schema, Node);
-handle_delete(_Other, _Any) ->
-    ok.
+    delete_matched(rxframe, #rxframe{frid='$1', devaddr=DevAddr, _='_'}).
 
 delete_matched(Table, Record) ->
     lists:foreach(

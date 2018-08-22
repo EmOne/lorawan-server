@@ -269,6 +269,7 @@ check_fcnt({Network, Profile, Node}, FCnt) ->
             % works for 16b only since we cannot distinguish between reset and 32b rollover
             {ok, uplink, Node#node{fcntup = FCnt, fcntdown=0,
                 adr_use=initial_adr(Network), adr_failed=[],
+                dcycle_use=Network#network.dcycle_init,
                 rxwin_use=Network#network.rxwin_init, rxwin_failed=[],
                 last_reset=calendar:universal_time(), devstat_fcnt=undefined, last_qs=[]}};
         Profile#profile.fcnt_check == 3, FCnt == 0 ->
@@ -331,7 +332,7 @@ ensure_adr(#network{init_chans=InitChans, max_power=MaxPower}, Node) ->
                 when is_integer(TXPower), is_integer(DataRate), is_list(Chans) ->
             Node;
         _Else ->
-            lager:debug("~p ADR initialized", [binary_to_hex(Node#node.devaddr)]),
+            lager:warning("~p ADR initialized", [binary_to_hex(Node#node.devaddr)]),
             Node#node{adr_use={MaxPower, 0, InitChans}}
     end.
 
@@ -341,7 +342,7 @@ ensure_rxwin(#network{rxwin_init=WinInit}, Node) ->
                 when is_integer(OffSet), is_integer(RX2DataRate), is_number(Frequency) ->
             Node;
         _Else ->
-            lager:debug("~p RXWindow initialized", [binary_to_hex(Node#node.devaddr)]),
+            lager:warning("~p RXWindow initialized", [binary_to_hex(Node#node.devaddr)]),
             Node#node{rxwin_use=WinInit}
     end.
 
@@ -374,16 +375,17 @@ create_node(Gateways, {#network{netid=NetID}=Network, Profile, #device{deveui=De
         fcntup=undefined, fcntdown=0, last_reset=calendar:universal_time(),
         gateways=Gateways, adr_flag=0, adr_set=undefined,
         adr_use=initial_adr(Network), adr_failed=[],
+        dcycle_use=Network#network.dcycle_init,
         rxwin_use=accept_rxwin(Profile, Network), rxwin_failed=[],
         devstat_fcnt=undefined, last_qs=[]},
     Node2 =
         case mnesia:read(node, DevAddr, write) of
-            [#node{first_reset=First, reset_count=Cnt, last_rx=undefined, devstat=Stats}]
+            [#node{location=Location, first_reset=First, reset_count=Cnt, last_rx=undefined, devstat=Stats}]
                     when is_integer(Cnt) ->
                 lorawan_utils:throw_warning({node, DevAddr}, {repeated_reset, Cnt+1}, First),
-                Node#node{reset_count=Cnt+1, devstat=Stats};
-            [#node{devstat=Stats}] ->
-                Node#node{first_reset=calendar:universal_time(), reset_count=0, devstat=Stats};
+                Node#node{location=Location, reset_count=Cnt+1, devstat=Stats};
+            [#node{location=Location, devstat=Stats}] ->
+                Node#node{location=Location, first_reset=calendar:universal_time(), reset_count=0, devstat=Stats};
             [] ->
                 Node#node{first_reset=calendar:universal_time(), reset_count=0, devstat=[]}
         end,
