@@ -65,7 +65,7 @@ handle_info({uplink, _Node, _Vars0}, #state{publish_uplinks=PatPub}=State)
 handle_info({uplink, _Node, Vars0}, #state{conn=Conn}=State) ->
     case ensure_connected(ensure_gun(State)) of
         {ok, State2} ->
-            {noreply, handle_uplink(Vars0, State2)};
+            {noreply, handle_uplinks(Vars0, State2)};
         {error, State2} ->
             lager:warning("Connector ~p not connected, uplink lost", [Conn#connector.connid]),
             {noreply, State2}
@@ -151,7 +151,8 @@ ensure_gun(#state{conn=#connector{connid=ConnId, uri=Uri}, pid=undefined}=State)
             {ok, {http, _UserInfo, HostName, Port, _Path, _Query}} ->
                 gun:open(HostName, Port);
             {ok, {https, _UserInfo, HostName, Port, _Path, _Query}} ->
-                gun:open(HostName, Port, #{transport=>ssl})
+                Opts = application:get_env(lorawan_server, ssl_options, []),
+                gun:open(HostName, Port, #{transport=>ssl, transport_opts=>Opts})
         end,
     MRef = monitor(process, ConnPid),
     State#state{pid=ConnPid, mref=MRef, ready=false, streams=#{}}.
@@ -174,10 +175,13 @@ disconnect(undefined) ->
 disconnect(ConnPid) ->
     gun:close(ConnPid).
 
-handle_uplink(Vars0, State) when is_list(Vars0) ->
+handle_uplinks(Vars0, State) when is_list(Vars0) ->
     lists:foldl(
         fun(V0, S) -> handle_uplink(V0, S) end,
         State, Vars0);
+handle_uplinks(Vars0, State) ->
+    handle_uplink(Vars0, State).
+
 handle_uplink(Vars0, #state{conn=#connector{format=Format}, publish_uplinks=Publish}=State) ->
     {ContentType, Body} = encode_uplink(Format, Vars0),
     send_publish(lorawan_admin:build(Vars0), Publish, ContentType, Body, State).

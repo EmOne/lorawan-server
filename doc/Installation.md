@@ -36,8 +36,8 @@ Then start the server by `systemctl start lorawan-server`.
 
 ### Using the Binary Release on Linux
 
-You will need the Erlang/OTP 19 or 20. Try typing `yum install erlang` or
-`apt-get install erlang`. **Erlang 21 is not yet supported.**
+You will need the Erlang/OTP 19 or higher. Try typing `yum install erlang` or
+`apt-get install erlang`.
 
 Check your Erlang/OTP version by typing `erl`. If your Linux distribution
 includes some older version of Erlang/OTP, install an update from
@@ -186,6 +186,18 @@ cp lorawan-forwarder.xml /usr/lib/firewalld/services
 firewall-cmd --permanent --add-service=lorawan-forwarder
 firewall-cmd --reload
 ```
+
+The [lager](https://github.com/erlang-lager/lager#internal-log-rotation) system
+is used to create and rotate logs. By default two logs will be created: debug and
+error. Lager will rotate each log file at midnight or when it reaches 10MB,
+whichever comes first, and keep 5 rotated logs in addition to the current one.
+
+To reduce the amount of storage utilized by the logs and have only 3 files <5MB
+modify the lager handlers configuration in your sys.config:
+```erlang
+{lager_file_backend, [{file, "debug.log"}, {level, debug}, {size, 5242880}, {count, 3}]}
+```
+
 
 ## Configuration of the packet_forwarder
 

@@ -107,6 +107,12 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         { value: 15, label: '1/32768 (0.003%)' }
     ];
 
+    qos_choices = [
+        { value: 0, label: 'At most once' },
+        { value: 1, label: 'At least once' },
+        { value: 2, label: 'Exactly once' }
+    ];
+
     // ---- config
     config.editionView().fields([
         // General
@@ -830,7 +836,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
 
     // ---- rxframes
     rxframes.listView().title('Frames')
-        .batchActions([]);
+        .actions(['filter', 'export', '<purgebtn entity="entity"></purgebtn>']);
     rxframes.listView().fields([
         nga.field('dir')
             .template(function(entry){ return dirIndicator(entry.values) }),
@@ -920,8 +926,12 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('uri').label('URI')
             .attributes({ placeholder: 'e.g. mqtt://server:8883' })
             .validation({ required: true, pattern: '^(http:|((amqp|mqtt|http)s?:\/\/[^\/?#]+[^?#]*)|ws:|mongodb:\/\/[^\/?#]+)' }),
+        nga.field('publish_qos', 'choice').label('Publish QoS')
+            .choices(qos_choices),
         nga.field('publish_uplinks'),
         nga.field('publish_events'),
+        nga.field('subscribe_qos', 'choice').label('Subscribe QoS')
+            .choices(qos_choices),
         nga.field('subscribe').label('Subscribe'),
         nga.field('received').label('Received Topic'),
         nga.field('enabled', 'boolean')
@@ -948,13 +958,13 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .uploadInformation({'url': '/api/upload'})
     ]);
     connectors.creationView().template(createWithTabsTemplate([
-        {name:"General", min:0, max:10},
-        {name:"Authentication", min:10, max:16}
+        {name:"General", min:0, max:12},
+        {name:"Authentication", min:12, max:18}
     ]));
     connectors.editionView().fields(connectors.creationView().fields());
     connectors.editionView().template(editWithTabsTemplate([
-        {name:"General", min:0, max:10},
-        {name:"Authentication", min:10, max:16}
+        {name:"General", min:0, max:12},
+        {name:"Authentication", min:12, max:18}
     ]));
     // add to the admin application
     admin.addEntity(connectors);
@@ -1056,6 +1066,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     .perPage(ItemsPerPage)
     .infinitePagination(InfinitePagination)
     .sortField('last_rx')
+    .actions(['filter', 'batch', 'export', '<purgebtn entity="entity"></purgebtn>'])
     .listActions('<eventbtn entry="entry"></eventbtn>');
     events.listView().filters([
         nga.field('severity', 'choice')
@@ -1461,6 +1472,8 @@ function dirIndicator(values) {
     switch (values.dir) {
         case "up":
             return '<span class="fa fa-arrow-up fa-fw" title="up"></span>';
+        case "re-up":
+            return '<span style="color:red" class="fa fa-arrow-up fa-fw" title="re-up"></span>';
         case "down":
             return '<span class="fa fa-arrow-down fa-fw" title="down"></span>';
         case "bcast":
@@ -1484,6 +1497,56 @@ function($delegate, $translate, notification) {
     }
     return $delegate;
 }]);
+
+myApp.config(function ($stateProvider) {
+    $stateProvider.state('purge', {
+        parent: 'ng-admin',
+        url: '/:entity/purge',
+        params: { entity: null },
+        controller: purgeController,
+        controllerAs: 'controller',
+        template: purgeControllerTemplate
+    });
+});
+
+function purgeController($scope, $http, $state, $stateParams) {
+    this.name = $stateParams.entity;
+
+    $scope.clearItems = function() {
+            $http({method: 'DELETE', url: '/api/' + $stateParams.entity});
+            $state.go('list', $stateParams);
+        }
+    $scope.goBack = function() {
+            $state.go('list', $stateParams);
+        }
+};
+purgeController.inject = ['$scope', '$http', '$state', '$stateParams'];
+
+var purgeControllerTemplate =
+    '<div class="row list-header">' +
+        '<div class="col-lg-12">' +
+            '<div class="page-header">' +
+                '<ma-view-actions><ma-back-button></ma-back-button></ma-view-actions>' +
+                '<h1>Purge all {{ controller.name }}</h1>' +
+            '</div>' +
+        '</div>' +
+    '</div>' +
+    '<div class="row">' +
+        '<div class="col-lg-12">' +
+            '<p translate="ARE_YOU_SURE"></p>' +
+            '<button class="btn btn-danger" ng-click="clearItems()" translate="YES"></button>&nbsp;' +
+            '<button class="btn btn-default" ng-click="goBack()" translate="NO"></button>' +
+        '</div>' +
+    '</div>';
+
+myApp.directive('purgebtn', ['$http', function($http) {
+return {
+    restrict: 'E',
+    scope: {
+        entity: '='
+    },
+    template: '<a class="btn btn-default" href="#/{{entity.name()}}/purge"><span class="glyphicon glyphicon-trash" aria-hidden="true"></span>&nbsp;<span class="hidden-xs" translate="Purge"></span></a>'
+};}]);
 
 myApp.directive('eventbtn', ['$http', function($http) {
 return {
