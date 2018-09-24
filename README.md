@@ -6,11 +6,11 @@ or for device and application developers.
 
 **Warning** After a major version upgrade you are required to review and complete
 the configuration before connecting any gateway or device!
+ * After migrating from version 0.5.x to 0.6.x you need to assign Profiles to
+   Groups and Gateways to Areas.
  * Migrating from version 0.4.x to 0.5.x will preserve the Device/Node addresses
    and security keys, but will delete many ADR parameters, which got moved to the
    Profile settings.
- * After migrating from version 0.5.x to 0.6.x you need to assign Profiles to
-   Groups and Gateways to Areas.
 
 The server:
  * Implements the LoRaWAN Specification v1.0.3
@@ -29,6 +29,7 @@ The server:
      (via an [external plug-in](https://github.com/gotthardp/lorawan-server-demoapp))
  * Automatically parses well-known payload formats. It currently supports:
    * [Cayenne Low Power Payload](https://github.com/myDevicesIoT/cayenne-docs/blob/master/docs/LORA.md#cayenne-low-power-payload)
+   * [Concise Binary Object Representation (CBOR)](https://tools.ietf.org/rfc/rfc7049.txt)
  * Stores uplink data directly to a MongoDB collection.
  * Invokes external applications. It currently supports connections via:
    * WebSocket protocol [RFC6455](https://tools.ietf.org/rfc/rfc6455.txt)
@@ -40,7 +41,8 @@ The server:
      [MathWorks ThingSpeak](https://thingspeak.com/),
      [Microsoft Azure IoT Hub](https://azure.microsoft.com/en-us/services/iot-hub/),
      [ThingsBoard Open-source IoT Platform](https://thingsboard.io),
-     or [Adafruit IO](https://io.adafruit.com/)
+     [Adafruit IO](https://io.adafruit.com/),
+     or [Orange Live Objects](https://liveobjects.orange-business.com)
    * AMQP 0-9-1 to the [RabbitMQ](http://www.rabbitmq.com/)
  * Handles (any number of) Class A or Class C devices.
    * Supports both the node activation by personalization (ABP) and the
@@ -96,8 +98,11 @@ The main components of the lorawan-server are shown in the following figure:
 The server behaviour is described in the [Introduction](doc/Introduction.md).
 
 The [Installation Instructions](doc/Installation.md) describe how to build,
-install and configure the server. You can use a Debian package, download the binary
+install and upgrade the server. You can use a Debian package, download the binary
 release and run it manually or build the server from source codes.
+
+Follow the [Configuration Instructions](doc/Configuration.md) to correctly
+setup your server.
 
 Run the lorawan-server release by:
 ```bash
@@ -178,6 +183,7 @@ and institutions. It was mentioned by the following blogs and articles:
  * [Espruino RN2483 LoRa Modules](http://www.espruino.com/RN2483)
  * [1-Gate LoRaWAN Gateway COMPACT](http://www.1-gate.com/english/lorawan-gateways)
  * [LoRaWAN evaluation by Witekio](https://witekio.com/blog/lorawan-dedicated-iot-network)
+ * [Сергей Гаевский: Построение корпоративной сети LoRaWAN](http://controlengrussia.com/besprovodny-e-tehnologii/korporativnoj-seti-lorawan), in Беспроводные технологии №3’17
 
 Please let me know if you use the lorawan-server and want to be listed here.
 

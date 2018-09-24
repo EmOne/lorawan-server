@@ -45,7 +45,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     var handlers = nga.entity('handlers')
         .identifier(nga.field('app'));
     var connections = nga.entity('connections')
-        .identifier(nga.field('app'));
+        .identifier(nga.field('pid'));
     var events = nga.entity('events')
         .identifier(nga.field('evid'));
 
@@ -53,6 +53,12 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         { value: 0, label: 'Disabled' },
         { value: 1, label: 'Auto-Adjust' },
         { value: 2, label: 'Maintain' }
+    ];
+
+    join_choices = [
+        { value: 0, label: 'Denied' },
+        { value: 1, label: 'Allowed' },
+        { value: 2, label: 'Allowed with old Nonce' }
     ];
 
     fcnt_choices = [
@@ -139,7 +145,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('sname').label('Name').isDetailLink(true),
         nga.field('modules.lorawan_server').label('Version'),
         nga.field('memory').label('Free Memory')
-            .map(map_diskstats),
+            .map(map_memstats),
         nga.field('disk').label('Free Disk')
             .map(map_diskstats),
         nga.field('health_alerts', 'choices').label('Alerts')
@@ -162,7 +168,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('sname', 'template').label('Performance')
             .template('<sgraph value="value"></sgraph>'),
         nga.field('memory').label('Free Memory')
-            .map(map_diskstats)
+            .map(map_memstats)
             .editable(false),
         nga.field('disk', 'embedded_list').label('Disks')
             .targetFields([
@@ -233,7 +239,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('desc').label('Description'),
         nga.field('ip_address.ip').label('IP Address'),
         nga.field('dwell', 'float').label('Dwell [%]')
-            .map(function(value, entry){ return first(value, 'hoursum', 36000); }),
+            .map(function(value, entry){ return first_div(value, 'hoursum', 36000); }),
         nga.field('last_alive', 'datetime').label('Last Alive'),
         nga.field('health_decay', 'number').label('Status')
             .template(function(entry){ return healthIndicator(entry.values) })
@@ -510,6 +516,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .targetField(nga.field('name'))
             .validation({ required: true }),
         nga.field('appid').label('App Identifier'),
+        nga.field('join', 'choice')
+            .choices(join_choices)
+            .defaultValue(1), // Enabled
         nga.field('fcnt_check', 'choice').label('FCnt Check')
             .choices(fcnt_choices)
             .defaultValue(0), // Strict 16-bit
@@ -567,8 +576,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .then(response => { choices_groups = response.data });
     }]);
     profiles.creationView().template(createWithTabsTemplate([
-        {name:"General", min:0, max:6},
-        {name:"ADR", min:6, max:16}
+        {name:"General", min:0, max:7},
+        {name:"ADR", min:7, max:17}
     ]));
     profiles.editionView().fields(profiles.creationView().fields())
     .prepare(['$http', function($http) {
@@ -576,8 +585,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .then(response => { choices_groups = response.data });
     }]);
     profiles.editionView().template(editWithTabsTemplate([
-        {name:"General", min:0, max:6},
-        {name:"ADR", min:6, max:16}
+        {name:"General", min:0, max:7},
+        {name:"ADR", min:7, max:17}
     ]));
     // add to the admin application
     admin.addEntity(profiles);
@@ -588,7 +597,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('profile'),
         nga.field('appargs').label('App Arguments'),
         nga.field('desc').label('Description'),
-        nga.field('last_join', 'datetime').label('Last Join'),
+        nga.field('last_join', 'datetime')
+            .map(function(value, entry) { return first(entry.last_joins, 'time') }),
         nga.field('node', 'reference')
             .targetEntity(nodes)
             .targetField(nga.field('devaddr'))
@@ -620,7 +630,12 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .attributes({ placeholder: 'e.g. FEDCBA9876543210FEDCBA9876543210' })
             .validation({ required: true, pattern: '[A-Fa-f0-9]{32}' }),
         nga.field('desc').label('Description'),
-        nga.field('last_join', 'datetime').label('Last Join'),
+        nga.field('last_joins', 'embedded_list')
+            .targetFields([
+                nga.field('time', 'datetime'),
+                nga.field('dev_nonce')
+            ])
+            .editable(false),
         nga.field('node')
             .attributes({ placeholder: 'e.g. ABC12345' })
             .validation({ pattern: '[A-Fa-f0-9]{8}' })
@@ -715,6 +730,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .targetFields([
                 nga.field('deveui').label('DevEUI').isDetailLink(true),
                 nga.field('last_join', 'datetime')
+                    .map(function(value, entry) { return first(entry.last_joins, 'time') })
             ]),
         nga.field('gateways', 'embedded_list')
             .targetFields([
@@ -955,7 +971,23 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('certfile', 'file').label('User Certificate')
             .uploadInformation({'url': '/api/upload'}),
         nga.field('keyfile', 'file').label('Private Key')
-            .uploadInformation({'url': '/api/upload'})
+            .uploadInformation({'url': '/api/upload'}),
+        // Status
+        nga.field('health_alerts', 'choices').label('Alerts')
+            .editable(false),
+        nga.field('connid', 'referenced_list').label('Connections')
+            .targetEntity(connections)
+            .targetReferenceField('connid')
+            .targetFields([
+                nga.field('uri').label('URI'),
+                nga.field('client_id').label('Client ID'),
+                nga.field('subs').label('Subscriptions')
+                    .template(function(entry) {
+                        return entry.values.subs.join('<br>');
+                    }),
+                nga.field('status')
+                    .template(function(entry){ return connectIndicator(entry.values) })
+            ])
     ]);
     connectors.creationView().template(createWithTabsTemplate([
         {name:"General", min:0, max:12},
@@ -964,7 +996,8 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     connectors.editionView().fields(connectors.creationView().fields());
     connectors.editionView().template(editWithTabsTemplate([
         {name:"General", min:0, max:12},
-        {name:"Authentication", min:12, max:18}
+        {name:"Authentication", min:12, max:18},
+        {name:"Status", min:18, max:20}
     ]));
     // add to the admin application
     admin.addEntity(connectors);
@@ -1006,7 +1039,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('payload', 'choice')
             .choices([
                 { value: 'ascii', label: 'ASCII Text' },
-                { value: 'cayenne', label: 'Cayenne LPP' }
+                { value: 'cayenne', label: 'Cayenne LPP' },
+                { value: 'cbor', label: 'CBOR' },
+                { value: 'custom', label: 'Custom Binary' }
             ]),
         nga.field('parse_uplink', 'text'),
         nga.field('event_fields', 'choices')
@@ -1096,7 +1131,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 nga.field('sname').label('Name').isDetailLink(true),
                 nga.field('modules.lorawan_server').label('Version'),
                 nga.field('memory').label('Memory')
-                    .map(map_diskstats),
+                    .map(map_memstats),
                 nga.field('disk').label('Disk')
                     .map(map_diskstats),
                 nga.field('health_decay', 'number').label('Status')
@@ -1108,7 +1143,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 nga.field('mac').label('MAC').isDetailLink(true),
                 nga.field('ip_address.ip').label('IP Address'),
                 nga.field('dwell', 'float').label('Dwell [%]')
-                    .map(function(value, entry){ return first(value, 'hoursum', 36000); }),
+                    .map(function(value, entry){ return first_div(value, 'hoursum', 36000); }),
                 nga.field('last_alive', 'datetime'),
                 nga.field('health_decay', 'number').label('Status')
                     .template(function(entry){ return healthIndicator(entry.values) })
@@ -1241,7 +1276,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
     nga.configure(admin);
 }]);
 
-function map_diskstats(value, entry) {
+function map_memstats(value, entry) {
     if ('memory.free_memory' in entry) {
         var free = 100 * entry['memory.free_memory'] / entry['memory.total_memory'];
         return bytesToSize(entry['memory.free_memory']) + " (" + free.toFixed(0) + "%)";
@@ -1334,7 +1369,12 @@ function enquote(items) {
     return items.map(function(item) { return "'" + item + "'" }).join(',');
 }
 
-function first(array, element, divide = 1) {
+function first(array, element) {
+    if(Array.isArray(array) && array.length > 0)
+        return array[0][element];
+}
+
+function first_div(array, element, divide) {
     if(Array.isArray(array) && array.length > 0)
         return array[0][element] / divide;
 }
@@ -1480,6 +1520,17 @@ function dirIndicator(values) {
             return '<span class="fa fa-arrows fa-fw" title="bcast"></span>';
         default:
             return '';
+    }
+}
+
+function connectIndicator(values) {
+    switch (values.status) {
+        case "disconnected":
+            return '<span style="color:red" class="fa fa-exclamation-circle fa-fw" title="disconnected"></span>';
+        case "connecting":
+            return '<span style="color:orange" class="fa fa-exclamation-triangle fa-fw" title="connecting"></span>';
+        case "connected":
+            return '<span style="color:yellowgreen" class="fa fa-check fa-fw" title="connected"></span>';
     }
 }
 
@@ -1979,10 +2030,9 @@ return {
     },
     link: function($scope) {
         $scope.count = 0;
-        $http({method: 'GET', url: '/api/connections/'+$scope.value})
+        $http({method: 'GET', url: '/api/connections', params: {_filters: {app: $scope.value}}})
             .then(function(response) {
-                if(response.data.count > 0)
-                    $scope.count = response.data.count;
+                $scope.count = response.data.length;
             })
 
         $scope.sendTest = function() {

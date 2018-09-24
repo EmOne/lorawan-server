@@ -34,7 +34,7 @@ This may be due to:
  * Gateway misconfiguration. Check the gateway configuration includes a correct
    server IP and port (by default 1680).
  * Firewall misconfiguration. Check the server firewall does not block the port 1680.
-   See [Installation Instructions](Installation.md) for configuration guidelines.
+   See [Configuration Instructions](Configuration.md) for detailed guidelines.
 
 ### No downlink frames delivered
 
@@ -80,6 +80,14 @@ If you see strange *DevAddr* numbers from devices that you don't know, there
 may be a second network near you. You can add devices from this network into
 the list of [Ignored Nodes](Infrastructure.md).
 
+### second_join
+
+The Join request did include the same DevNonce as some of the previous requests.
+This may be cause of a faulty device or a reply attack.
+
+To join with a faulty device you may set the *Join* parameter of the device *Profile*
+to *Allowed with old Nonce*.
+
 ### bad_mic
 
 The Message Integrity Check (MIC) of a received frame has failed.
@@ -114,9 +122,13 @@ warning. It may be because:
 
 ### not_semtech_mote
 
-The server is configured to use the *semtech-mote* application, but your device
-sent some other data. Make sure your firmware uses the
-[supported format](https://github.com/Lora-net/LoRaMac-node/blob/master/src/apps/LoRaMac/classA/LoRaMote/main.c#L207).
+The Device *Profile* defines the *semtech-mote* application, but your device
+sent some other data. It may be because:
+ * The Device *Application* is misconfigured. If you want to send the uplink
+   frames to an external application, you need to define a Backend
+   [Handler](Handlers.md) and use its name in the Device *Profile*.
+ * You have some other Mote device. Make sure your firmware uses the
+   [supported format](https://github.com/Lora-net/LoRaMac-node/blob/master/src/apps/LoRaMac/classA/LoRaMote/main.c#L207).
 
 ### downlink_missed
 

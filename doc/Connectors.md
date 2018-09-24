@@ -31,14 +31,17 @@ To create a new connector you set:
    wilcards, e.g. `in/#`. The MQTT broker will then send messages with a matching
    topic to this connector.
  - **Received Topic**, which is a template for parsing the topic of received
-   messages, e.g. `in/{devaddr}`. This can be used to obtain a DevEUI, DevAddr or
-   a device group that shall receive a given downlink.
+   (subscribed) messages, e.g. `in/{devaddr}`. This can be used to retrieve the
+   target DevEUI, DevAddr or App directly from the topic name.
  - **Enabled** flag that allows you to temporarily disable an existing connector.
  - **Failed** flag indicates what has failed. The Event list includes more
    details.
    - **badarg** when some of connector parameters is bad
    - **network** when the destination server cannot be reached
    - **topic** when the target broker configuration is wrong
+
+If the Connector is *Enabled* the server will automatically connect to the
+backend server and subscribe this topic.
 
 When a *Failed* flag is raised, the connector is inactive and no connection is
 established. To re-establish the connection after an error occures, fix the
@@ -56,8 +59,10 @@ On the Authentication tab:
  - **Name** and **Password/Key** for plain authentication
  - **User Certificate** and **Private Key** if SSL authentication is needed
 
-If the Connector is *Enabled* the server will automatically connect to the
-backend server and subscribe this topic.
+On the Status tab you can view the status of established connections:
+ - **URI** and **Cliend ID** used
+ - **Subscriptions** made
+ - **Status** of the connection: `disconnected`, `connecting` or `connected`
 
 Please read the [Integration Guide](Integration.md) for detailed information on
 how to connect to a specific IoT Platform like AWS IoT, IBM Watson IoT, MathWorks
@@ -162,10 +167,12 @@ request upon receiving an uplink frame. It can also listen for incoming
 HTTP PUT/POST requests and trigger downlink frames.
 
 To create a HTTP connector you set:
- - **URI** to the target host either as `http://host:port` or `http://host:port. Do
-   not append any path: use the *Publish Uplinks* or *Events* field instead.
- - **Publish Uplinks** to a URL pattern starting with a slash, e.g. '/uplink/{devaddr}'
- - **Publish Events** to another URL pattern, e.g. '/events/{devaddr}'
+ - **URI** to the target host either as `http://host:port` or `https://host:port.
+   You also may include a common URL prefix `http://host:port/prefix`
+ - **Publish Uplinks** to a URL pattern, e.g. '/uplink/{devaddr}'. If you leave
+   this field empty, no message will be sent upon uplink.
+ - **Publish Events** to another URL pattern, e.g. '/events/{devaddr}'. Leave it
+   empty if you don't want any uplink upon events.
  - **Received Topic** is a template for parsing the topic of received downlink
    messages, e.g. `/in/{devaddr}`.
 
@@ -246,4 +253,4 @@ Open the lorawan-server web-administration and create a Backend Connector:
  - **Publish Uplinks** and **Publish Events** must be in the format *Database*/*Collection*.
    The *Database* is optional; if not provided, `local` is used by default.
 
-Authentication is not supported.
+On the Authentication tab you may set the *Name* and *Password/Key*.

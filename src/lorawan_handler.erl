@@ -23,7 +23,7 @@ callback_mode() ->
     state_functions.
 
 idle(cast, {frame, {MAC, RxQ, _}, <<2#000:3, _/bitstring>>=PHYPayload}, _Data) ->
-    case lorawan_mac:ingest_frame(PHYPayload) of
+    case lorawan_mac:ingest_frame(MAC, PHYPayload) of
         {join, {Network, Profile, Device}, DevAddr, DevNonce} ->
             case invoke_handler(handle_join, {Network, Profile, Device}, [{MAC, RxQ}, DevAddr]) of
                 ok ->
@@ -48,7 +48,7 @@ idle(cast, {frame, {MAC, RxQ, _}, <<2#000:3, _/bitstring>>=PHYPayload}, _Data) -
     end;
 idle(cast, {frame, {MAC, RxQ, _}, PHYPayload}, _Data) ->
     TimeStamp = erlang:monotonic_time(milli_seconds),
-    case lorawan_mac:ingest_frame(PHYPayload) of
+    case lorawan_mac:ingest_frame(MAC, PHYPayload) of
         {uplink, {Network, Profile, #node{devaddr=DevAddr}=Node}, #frame{ack=ACK}=Frame} ->
             % check whether last downlink transmission was lost
             LastMissed =
@@ -79,6 +79,8 @@ idle(cast, {frame, {MAC, RxQ, _}, PHYPayload}, _Data) ->
         {retransmit, {Network, Profile, Node}, Frame} ->
             % the server already handled this request
             {next_state, retransmit, {{Network, Profile, Node}, Frame}};
+        ignore ->
+            {next_state, drop, []};
         {ignore, Frame} ->
             case mnesia:dirty_read(gateway, MAC) of
                 [#gateway{area=AreaName}] ->
@@ -241,9 +243,10 @@ retransmit(cast, {rxq, Gateways0}, {{Network, Profile, #node{devaddr=DevAddr}=No
 
 log_only(cast, {rxq, Gateways0}, #frame{conf=Confirm, devaddr=DevAddr, fcnt=FCnt, port=Port}) ->
     Gateways = extract_rxq(Gateways0),
+    {ok, FrId} = eid:get_bin(),
     % log ignored frames too
     ok = mnesia:dirty_write(
-        #rxframe{frid= <<(erlang:system_time()):64>>, gateways=Gateways, devaddr=DevAddr,
+        #rxframe{frid=FrId, gateways=Gateways, devaddr=DevAddr,
             fcnt=FCnt, confirm=bit_to_bool(Confirm), port=Port,
             datetime=calendar:universal_time()}),
     {stop, normal, undefined}.
@@ -279,12 +282,7 @@ invoke_handler2(Module, Fun, Params) ->
     end.
 
 % class C
-downlink(#node{profile=ProfID}=Node, Time, TxData) ->
-    {atomic, {ok, Network, Profile}} =
-        mnesia:transaction(
-            fun() ->
-                lorawan_mac:load_profile(ProfID)
-            end),
+downlink({Network, Profile, Node}, Time, TxData) ->
     {MAC, _RxQ} = hd(Node#node.gateways),
     TxQ = lorawan_mac_region:rx2_rf(Network, Node),
     % will ACK immediately, so server-initated Class C downlinks have ACK=0
@@ -326,8 +324,9 @@ mac_for_profile(ProfName) ->
 build_rxframe(Dir, Gateways, {#network{name=NetName}, #profile{app=App},
         #node{location=Location, fcntup=FCnt, average_qs=AverageQs, adr_use={TXPower, _, _}}},
         #frame{conf=Confirm, devaddr=DevAddr, port=Port, data=Data}) ->
+    {ok, FrId} = eid:get_bin(),
     % #rxframe{frid, dir, network, app, devaddr, appargs, gateways, average_qs, powe, fcnt, confirm, port, data, datetime}
-    #rxframe{frid= <<(erlang:system_time()):64>>, dir=Dir, network=NetName,
+    #rxframe{frid=FrId, dir=Dir, network=NetName,
         app=App, devaddr=DevAddr, location=Location, gateways=Gateways,
         average_qs=AverageQs, powe=TXPower,
         fcnt=FCnt, confirm=bit_to_bool(Confirm), port=Port, data=Data,
@@ -335,14 +334,16 @@ build_rxframe(Dir, Gateways, {#network{name=NetName}, #profile{app=App},
 build_rxframe(Dir, MAC, {#network{name=NetName}, #profile{app=App},
         #node{location=Location, devaddr=DevAddr, fcntdown=FCnt}},
         #txdata{confirmed=Confirm, port=Port, data=Data}) ->
-    #rxframe{frid= <<(erlang:system_time()):64>>, dir=Dir, network=NetName,
+    {ok, FrId} = eid:get_bin(),
+    #rxframe{frid=FrId, dir=Dir, network=NetName,
         app=App, devaddr=DevAddr, location=Location, gateways=[{MAC, #rxq{}}],
         fcnt=FCnt, confirm=Confirm, port=Port, data=Data,
         datetime=calendar:universal_time()};
 build_rxframe(Dir, MAC, {#network{name=NetName}, #profile{app=App},
         #multicast_channel{devaddr=DevAddr, fcntdown=FCnt}},
         #txdata{confirmed=Confirm, port=Port, data=Data}) ->
-    #rxframe{frid= <<(erlang:system_time()):64>>, dir=Dir, network=NetName,
+    {ok, FrId} = eid:get_bin(),
+    #rxframe{frid=FrId, dir=Dir, network=NetName,
         app=App, devaddr=DevAddr, gateways=[{M, #rxq{}} || M <- MAC],
         fcnt=FCnt, confirm=Confirm, port=Port, data=Data,
         datetime=calendar:universal_time()}.
