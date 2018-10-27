@@ -22,7 +22,12 @@ the REST API described below.
 ![alt tag](https://raw.githubusercontent.com/gotthardp/lorawan-server/master/doc/images/admin-dashboard.png)
 
 The server Dashboard shows:
- * Rolling timeline displaying recent Frames and [Events](Events.md#events).
+ * Rolling timeline that displays:
+   - **red** error [events](Events.md#events);
+   - **yellow** warning [events](Events.md#events);
+   - **blue** handled uplinks frames;
+   - **cyan** sent downlinks frames;
+   - **gray** ignored uplinks frames.
  * Server information and a list of [Gateways](Infrastructure.md#gateways),
    and [Nodes](Devices.md#activated-nodes) that may need your attention.
    The lines are sorted by severity.
@@ -45,14 +50,8 @@ The following configuration pages are available:
    - [**Connectors**](Connectors.md) define the communication protocol to the
      backend servers.
 
-You (at least) have to:
- * Set parameters of your LoRaWAN *Networks* according to your region.
- * Add LoRaWAN gateways you want to use to the *Gateways* list.
- * For each type of a device define a device *Profile*.
- * Configure each device you want to use and assign them to one of the *Profiles*:
-   * To add a device activated by personalization (ABP), create a new *Nodes* list entry.
-   * To add an OTAA device, create a new *Devices* list entry and start the device.
-     The *Nodes* list will be updated automatically once the device joins the network.
+The server [Configuration Guidelines](Configuration.md) describe the configuration
+required to operate the server.
 
 
 ## Health Monitoring

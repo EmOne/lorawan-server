@@ -31,8 +31,9 @@ init([#connector{connid=Id, app=App, uri= <<"mongodb://", Servers0/binary>>,
     lager:debug("Connecting ~s to mongodb ~s", [Id, Servers0]),
     Pool = binary_to_atom(Id, latin1),
     % connect
+    {UserName, Password} = credentials(Connector),
     mongodb:replicaSets(Pool, 10,
-        string:tokens(binary_to_list(Servers0), ", ")),
+        string:tokens(binary_to_list(Servers0), ", "), UserName, Password),
     mongodb:connect(Pool),
     try
         {ok, #state{
@@ -46,6 +47,12 @@ init([#connector{connid=Id, app=App, uri= <<"mongodb://", Servers0/binary>>,
             lorawan_connector:raise_failed(Id, Error),
             {stop, shutdown}
     end.
+
+credentials(#connector{name=UserName})
+        when UserName == undefined; UserName == <<>> ->
+    {undefined, undefined};
+credentials(#connector{name=UserName, pass=Password}) ->
+    {UserName, Password}.
 
 handle_call(_Request, _From, State) ->
     {reply, {error, unknownmsg}, State}.
@@ -63,6 +70,12 @@ handle_info({uplink, _Node, Vars0}, #state{pool=Pool, publish_uplinks=PatPub}=St
 
 handle_info({event, _Node, Vars0}, #state{pool=Pool, publish_events=PatPub}=State) ->
     store_fields(Pool, PatPub, Vars0),
+    {noreply, State};
+
+handle_info({status, From}, #state{conn=#connector{connid=Id, app=App, uri=Uri}}=State) ->
+    From ! {status, [
+        #{module => <<"mongodb">>, pid => lorawan_connector:pid_to_binary(self()),
+            connid => Id, app => App, uri => Uri, status => get_status(State)}]},
     {noreply, State};
 
 handle_info(Unknown, State) ->
@@ -115,5 +128,11 @@ prepare_bson(Data) ->
                 (_Key, _Value) -> true
             end,
             Data)).
+
+get_status(#state{pool=Pool}) ->
+    case mongodb:is_connected(Pool) of
+        true -> <<"connected">>;
+        false -> <<"disconnected">>
+    end.
 
 % end of file

@@ -67,7 +67,7 @@ build_hierarchy(PatConn, PatSub, Nodes) ->
         end,
         [], Nodes).
 
-execute_hierarchy_updates(NewHier, CurrHier, #connector{connid=Id}=Conn) ->
+execute_hierarchy_updates(NewHier, CurrHier, #connector{connid=Id, subscribe_qos=QoS}=Conn) ->
     lists:filtermap(
         fun({Connect, C, CurrSub, Costa}) ->
             case proplists:get_value(Connect, NewHier) of
@@ -81,7 +81,7 @@ execute_hierarchy_updates(NewHier, CurrHier, #connector{connid=Id}=Conn) ->
                         [] ->
                             ok;
                         Subscribe ->
-                            [emqttc:subscribe(C, S, 1) || S <- Subscribe]
+                            [emqttc:subscribe(C, S, default(QoS, 0)) || S <- Subscribe]
                     end,
                     case lists:subtract(CurrSub, NewSub) of
                         [] ->
@@ -155,22 +155,25 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 
-handle_info(nodes_changed, #state{conn=Connector, connect=PatConn, subscribe=PatSub, hier=Hier}=State) ->
+handle_info(nodes_changed,
+        #state{conn=Connector, connect=PatConn, subscribe=PatSub, hier=Hier}=State) ->
     NewH = build_hierarchy(PatConn, PatSub,
         lorawan_backend_factory:nodes_with_backend(Connector#connector.app)),
     Hier2 =
         execute_hierarchy_updates(NewH, Hier, Connector),
     {noreply, State#state{hier=Hier2}};
 
-handle_info({reconnect, Connect, NewSub, Costa}, #state{hier=Hier}=State) ->
+handle_info({reconnect, Connect}, #state{hier=Hier}=State) ->
+    {Connect, _, Subs, Costa} = lists:keyfind(Connect, 1, Hier),
     {ok, C, Costa2} = reconnect(Costa),
     {noreply, State#state{hier=lists:keystore(Connect, 1, Hier,
-        {Connect, C, NewSub, Costa2})}};
+        {Connect, C, Subs, Costa2})}};
 
-handle_info({mqttc, C, connected}, #state{hier=Hier}=State) ->
+handle_info({mqttc, C, connected},
+        #state{conn=#connector{subscribe_qos=QoS}, hier=Hier}=State) ->
     {Connect, C, NewSub, Costa} = lists:keyfind(C, 2, Hier),
     % make all required subscriptions
-    [emqttc:subscribe(C, S, 1) || S <- NewSub],
+    [emqttc:subscribe(C, S, default(QoS, 0)) || S <- NewSub],
     NewPhase =
         case Costa#costa.phase of
             attempt31 -> connected31;
@@ -186,11 +189,11 @@ handle_info({mqttc, _C, disconnected}, State) ->
 handle_info({uplink, _Node, _Vars0}, #state{publish_uplinks=PatPub}=State)
         when PatPub == undefined; PatPub == ?EMPTY_PATTERN ->
     {noreply, State};
-handle_info({uplink, Node, Vars0}, #state{conn=#connector{format=Format},
-        publish_uplinks=PatPub}=State) ->
+handle_info({uplink, Node, Vars0},
+        #state{conn=#connector{format=Format, publish_qos=QoS}, publish_uplinks=PatPub}=State) ->
     case connection_for_node(Node, State) of
         {ok, C} ->
-            publish_uplink(C, PatPub, Format, Vars0);
+            publish_uplinks(C, PatPub, Format, QoS, Vars0);
         {error, Error} ->
             lager:debug("Connector not available: ~p", [Error])
     end,
@@ -199,11 +202,11 @@ handle_info({uplink, Node, Vars0}, #state{conn=#connector{format=Format},
 handle_info({event, _Node, _Vars0}, #state{publish_events=PatPub}=State)
         when PatPub == undefined; PatPub == ?EMPTY_PATTERN ->
     {noreply, State};
-handle_info({event, Node, Vars0}, #state{publish_events=PatPub}=State) ->
-lager:debug("WTF ~p", [PatPub]),
+handle_info({event, Node, Vars0},
+        #state{conn=#connector{publish_qos=QoS}, publish_events=PatPub}=State) ->
     case connection_for_node(Node, State) of
         {ok, C} ->
-            publish_event(C, PatPub, Vars0);
+            publish_event(C, PatPub, QoS, Vars0);
         {error, Error} ->
             lager:debug("Connector not available: ~p", [Error])
     end,
@@ -224,22 +227,29 @@ handle_info({publish, Topic, Payload}, State=#state{conn=Connector, received=Pat
 
 handle_info(ping, #state{hier=Hier}=State) ->
     lists:foreach(
-        fun({_Connect, C, _NewSub, _Costa}) ->
-            pong = emqttc:ping(C)
+        fun
+            ({_, undefined, _, _}) ->
+                ok;
+            ({_, C, _, _}) ->
+                pong = emqttc:ping(C)
         end,
         Hier),
     {noreply, State};
 
 handle_info({'EXIT', C, Error}, #state{conn=#connector{connid=ConnId}, hier=Hier}=State) ->
-    {Connect, C, NewSub, #costa{phase=OldPhase, connect_count=Count}=Costa} = lists:keyfind(C, 2, Hier),
+    {Connect, C, Subs, #costa{phase=OldPhase, connect_count=Count}=Costa} = lists:keyfind(C, 2, Hier),
     lager:debug("Connector ~p to ~p (~p) failed: ~p (count: ~p)", [ConnId, hd(Connect), OldPhase, Error, Count]),
-    case handle_reconnect(Connect, NewSub, Costa) of
+    case handle_reconnect(ConnId, Connect, Costa) of
         {ok, C2, Costa2} ->
             {noreply, State#state{hier=lists:keystore(Connect, 1, Hier,
-                {Connect, C2, NewSub, Costa2})}};
+                {Connect, C2, Subs, Costa2})}};
         remove ->
             {noreply, State#state{hier=lists:keydelete(Connect, 1, Hier)}}
     end;
+
+handle_info({status, From}, #state{conn=#connector{connid=Id, app=App}, hier=Hier}=State) ->
+    From ! {status, obtain_status(0, #{module=><<"mqtt">>, connid=>Id, app=>App}, Hier, [])},
+    {noreply, State};
 
 handle_info(Unknown, State) ->
     lager:debug("Unknown message: ~p", [Unknown]),
@@ -255,18 +265,17 @@ terminate(Reason, #state{conn=#connector{connid=ConnId}}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-handle_reconnect(Connect, NewSub, #costa{last_connect=Last, connect_count=Count} = Costa) ->
+handle_reconnect(ConnId, Connect, #costa{last_connect=Last, connect_count=Count} = Costa) ->
     case calendar:datetime_to_gregorian_seconds(calendar:universal_time())
             - calendar:datetime_to_gregorian_seconds(Last) of
         Diff when Diff < 30, Count > 120 ->
             % give up after 2 hours
-            lorawan_connector:raise_failed(Connect#connector.connid, <<"network">>),
+            lorawan_connector:raise_failed(ConnId, network),
             remove;
         Diff when Diff < 30, Count > 0 ->
             % wait, then wait even longer, but no longer than 30 sec
-            {ok, _} = timer:send_after(erlang:min(Count*5000, 30000),
-                {reconnect, Connect, NewSub, switch_ver(Costa#costa{connect_count=Count+1})}),
-            remove;
+            {ok, _} = timer:send_after(erlang:min(Count*5000, 30000), {reconnect, Connect}),
+            {ok, undefined, switch_ver(Costa#costa{connect_count=Count+1})};
         Diff when Diff < 30, Count == 0 ->
             % initially try to reconnect immediately
             reconnect(switch_ver(Costa#costa{connect_count=1}));
@@ -283,26 +292,31 @@ connection_for_node(Node, #state{connect=PatConn, hier=Hier}) ->
     Connect = lorawan_connector:fill_pattern(PatConn,
         lorawan_admin:build(lorawan_connector:node_to_vars(Node))),
     case lists:keyfind(Connect, 1, Hier) of
-        {Connect, C, _NewSub, _Costa} ->
+        {Connect, C, _NewSub, _Costa} when is_pid(C) ->
             {ok, C};
-        false ->
+        _Else ->
             {error, disconnected}
     end.
 
-publish_uplink(C, PatPub, Format, Vars0) when is_list(Vars0) ->
+publish_uplinks(C, PatPub, Format, QoS, Vars0) when is_list(Vars0) ->
     lists:foreach(
-        fun(V0) -> publish_uplink(C, PatPub, Format, V0) end,
+        fun(V0) -> publish_uplink(C, PatPub, Format, QoS, V0) end,
         Vars0);
-publish_uplink(C, PatPub, Format, Vars0) when is_map(Vars0) ->
+publish_uplinks(C, PatPub, Format, QoS, Vars0) when is_map(Vars0) ->
+    publish_uplink(C, PatPub, Format, QoS, Vars0).
+
+publish_uplink(C, PatPub, Format, QoS, Vars0) ->
     emqttc:publish(C,
         lorawan_connector:fill_pattern(PatPub, lorawan_admin:build(Vars0)),
-        encode_uplink(Format, Vars0)).
+        encode_uplink(Format, Vars0),
+        default(QoS, 0)).
 
-publish_event(C, PatPub, Vars0) ->
+publish_event(C, PatPub, QoS, Vars0) ->
     Vars = lorawan_admin:build(Vars0),
     emqttc:publish(C,
         lorawan_connector:fill_pattern(PatPub, Vars),
-        jsx:encode(Vars)).
+        jsx:encode(Vars),
+        default(QoS, 0)).
 
 encode_uplink(<<"raw">>, Vars) ->
     maps:get(data, Vars, <<>>);
@@ -311,6 +325,8 @@ encode_uplink(<<"json">>, Vars) ->
 encode_uplink(<<"www-form">>, Vars) ->
     lorawan_connector:form_encode(Vars).
 
+default(undefined, Def) -> Def;
+default(Any, _Def) -> Any.
 
 % Microsoft Shared Access Signature
 auth_args(HostName, <<"sas">>, DeviceID, KeyName, SharedKey) ->
@@ -341,5 +357,30 @@ ssl_args(mqtts, #connector{}) ->
     [{ssl, [
         {versions, ['tlsv1.2']}
     ]}].
+
+obtain_status(Idx, Common, [Item | More], Acc) ->
+    obtain_status(Idx+1, Common, More,
+        [build_status(Idx, Common, Item) | Acc]);
+obtain_status(_Idx, _Common, [], Acc) ->
+    Acc.
+
+build_status(Idx, Common, {[Uri, ClientId, _, _], _, Subs, _}=Item) ->
+    Common2 =
+        if_defined(client_id, ClientId,
+            Common),
+    Common2#{pid => lorawan_connector:pid_to_binary(self(), Idx), uri => Uri,
+        subs => Subs, status => status_of(Item)}.
+
+if_defined(_Key, undefined, Map) ->
+    Map;
+if_defined(Key, Value, Map) ->
+    maps:put(Key, Value, Map).
+
+status_of({_, undefined, _, _}) ->
+    disconnected;
+status_of({_, _, _, #costa{phase=Phase}}) when Phase == attempt31; Phase == attempt311 ->
+    connecting;
+status_of({_, _, _, #costa{phase=Phase}}) when Phase == connected31; Phase == connected311 ->
+    connected.
 
 % end of file

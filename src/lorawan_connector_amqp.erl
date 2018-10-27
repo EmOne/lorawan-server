@@ -52,7 +52,10 @@ handle_info(connect, #state{conn=#connector{connid=ConnId, uri=Uri, name=UserNam
     case amqp_uri:parse(Uri) of
         {ok, Params} ->
             case amqp_connection:start(
-                    Params#amqp_params_network{username=ensure_binary(UserName), password=ensure_binary(Password)}) of
+                    Params#amqp_params_network{
+                        username=ensure_binary(UserName),
+                        password=ensure_binary(Password),
+                        connection_timeout=5000}) of
                 {ok, Connection} ->
                     erlang:monitor(process, Connection),
                     self() ! subscribe,
@@ -110,7 +113,7 @@ handle_info({uplink, _Node, _Vars0}, #state{publish_uplinks=PatPub}=State)
 handle_info({uplink, _Node, Vars0},
         #state{conn=#connector{format=Format}, cpid=Connection, publish_uplinks=PatPub}=State) ->
     {ok, PubChannel} = amqp_connection:open_channel(Connection),
-    publish_uplink(PubChannel, Format, PatPub, Vars0),
+    publish_uplinks(PubChannel, Format, PatPub, Vars0),
     amqp_channel:close(PubChannel),
     {noreply, State};
 
@@ -135,6 +138,14 @@ handle_info({'DOWN', _Ref, process, SubChannel, Reason}, #state{subc=SubChannel}
     lager:warning("Channel ~p", [Reason]),
     self() ! subscribe,
     {noreply, State#state{subc=undefined}};
+
+handle_info({status, From}, #state{conn=#connector{connid=Id, app=App, uri=Uri}}=State) ->
+    From ! {status, [
+        set_status(State,
+            set_subs(State,
+                #{module => <<"amqp">>, pid => lorawan_connector:pid_to_binary(self()),
+                    connid => Id, app => App, uri => Uri}))]},
+    {noreply, State};
 
 handle_info(Unknown, State) ->
     lager:debug("Unknown message: ~p", [Unknown]),
@@ -187,11 +198,14 @@ handle_subscribe(#state{conn=#connector{connid=ConnId, subscribe=Sub}, subc=SubC
             {stop, shutdown, State}
     end.
 
-publish_uplink(PubChannel, Format, PatPub, Vars0) when is_list(Vars0) ->
+publish_uplinks(PubChannel, Format, PatPub, Vars0) when is_list(Vars0) ->
     lists:foreach(
         fun(V0) -> publish_uplink(PubChannel, Format, PatPub, V0) end,
         Vars0);
-publish_uplink(PubChannel, Format, PatPub, Vars0) when is_map(Vars0) ->
+publish_uplinks(PubChannel, Format, PatPub, Vars0) when is_map(Vars0) ->
+    publish_uplink(PubChannel, Format, PatPub, Vars0).
+
+publish_uplink(PubChannel, Format, PatPub, Vars0) ->
     amqp_channel:cast(PubChannel, basic_publish(PatPub, lorawan_admin:build(Vars0)),
         #amqp_msg{payload = encode_uplink(Format, Vars0)}).
 
@@ -216,6 +230,16 @@ encode_uplink(<<"json">>, Vars) ->
     jsx:encode(lorawan_admin:build(Vars));
 encode_uplink(<<"www-form">>, Vars) ->
     lorawan_connector:form_encode(Vars).
+
+set_status(#state{cpid=Connection}, Map) when is_pid(Connection) ->
+    Map#{status => <<"connected">>};
+set_status(#state{cpid=undefined}, Map) ->
+    Map#{status => <<"disconnected">>}.
+
+set_subs(#state{conn=#connector{subscribe=Sub}, subc=SubChannel}, Map) when is_pid(SubChannel) ->
+    Map#{subs => [Sub]};
+set_subs(#state{subc=undefined}, Map) ->
+    Map.
 
 ensure_binary(undefined) ->
     <<>>;

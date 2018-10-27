@@ -4,7 +4,7 @@
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
 -module(lorawan_connector).
--export([node_to_vars/1, is_pattern/1, pattern_for_cowboy/1]).
+-export([node_to_vars/1, pid_to_binary/1, pid_to_binary/2, is_pattern/1, pattern_for_cowboy/1]).
 -export([prepare_filling/1, fill_pattern/2, prepare_matching/1, match_vars/2, same_common_vars/2]).
 -export([shared_access_token/4]).
 -export([form_encode/1, decode_and_downlink/3]).
@@ -16,6 +16,12 @@ node_to_vars(#node{devaddr=DevAddr, appargs=AppArgs}) ->
     #{devaddr=>DevAddr, appargs=>AppArgs};
 node_to_vars({#device{appargs=AppArgs}, DevAddr}) ->
     #{devaddr=>DevAddr, appargs=>AppArgs}.
+
+pid_to_binary(Pid) ->
+    list_to_binary(pid_to_list(Pid)).
+
+pid_to_binary(Pid, Idx) ->
+    <<(pid_to_binary(Pid))/binary, "/", (integer_to_binary(Idx))/binary>>.
 
 is_pattern(Pattern) ->
     case string:chr(Pattern, ${) of
@@ -58,16 +64,32 @@ fill_pattern(undefined, _) ->
 fill_pattern({Pattern, []}, _) ->
     Pattern;
 fill_pattern({Pattern, Vars}, Values) ->
-    maps:fold(
-        fun(Var, Val, Patt) ->
-            case proplists:get_value(Var, Vars, undefined) of
-                {Start, Len} ->
-                    <<Prefix:Start/binary, _:Len/binary, Suffix/binary>> = Patt,
-                    <<Prefix/binary, Val/binary, Suffix/binary>>;
+    lists:foldr(
+        fun({Var, {Start, Len}}, Patt) ->
+            case get_value(Var, Values) of
                 undefined ->
-                    Patt
+                    Patt;
+                Val ->
+                    <<Prefix:Start/binary, _:Len/binary, Suffix/binary>> = Patt,
+                    <<Prefix/binary, Val/binary, Suffix/binary>>
             end
-        end, Pattern, Values).
+        end, Pattern, Vars).
+
+get_value(Var, Values) when is_map(Values) ->
+    case maps:is_key(Var, Values) of
+        true ->
+            maps:get(Var, Values);
+        false ->
+            % try searching recursively
+            get_value(Var, maps:values(Values))
+    end;
+get_value(Var, [First | Values]) ->
+    case get_value(Var, First) of
+        undefined -> get_value(Var, Values);
+        Val -> Val
+    end;
+get_value(_Var, _Else) ->
+    undefined.
 
 prepare_matching(undefined) ->
     undefined;
@@ -186,10 +208,10 @@ decode(<<"json">>, Msg) ->
 
 raise_failed(ConnId, {Error, Args}) ->
     lorawan_utils:throw_error({connector, ConnId}, {Error, Args}),
-    append_failed(ConnId, Error);
+    {atomic, ok} = append_failed(ConnId, Error);
 raise_failed(ConnId, Error) ->
     lorawan_utils:throw_error({connector, ConnId}, Error),
-    append_failed(ConnId, Error).
+    {atomic, ok} = append_failed(ConnId, Error).
 
 append_failed(ConnId, Error) ->
     mnesia:transaction(
@@ -221,6 +243,7 @@ pattern_test_()-> [
     matchtst(#{devaddr => <<"00112233">>}, <<"{devaddr}/suffix">>, <<"00112233/suffix">>),
     matchtst(#{devaddr => <<"00112233">>}, <<"prefix:{devaddr}:suffix">>, <<"prefix:00112233:suffix">>),
     matchtst(#{group => <<"test">>, devaddr => <<"00112233">>}, <<"{group}-{devaddr}">>, <<"test-00112233">>),
+    matchtst(#{a => <<"aaa">>, b => <<"b">>, c => <<"ccc">>, d => <<"d">>}, <<"{a}-{b}.{c}/{d}">>, <<"aaa-b.ccc/d">>),
     ?_assertEqual(<<"{unknown}/00112233">>,
         fill_pattern(prepare_filling(<<"{unknown}/{devaddr}">>), #{devaddr => <<"00112233">>})),
     ?_assertEqual(#{devaddr => <<"00112233">>},

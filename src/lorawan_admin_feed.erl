@@ -21,6 +21,7 @@ init0(Req, Table, Fields, Module, AuthFields) ->
     Filter = apply(Module, parse, [get_filters(Req)]),
     Match = list_to_tuple([Table|[maps:get(X, Filter, '_') || X <- Fields]]),
     % convert to websocket
+    lager:debug("Feed ~p connected ~p", [Table, cowboy_req:peer(Req)]),
     {ok, Timeout} = application:get_env(lorawan_server, websocket_timeout),
     {cowboy_websocket, Req,
         #state{table=Table, fields=Fields, module=Module, match=Match, auth_fields=AuthFields},
@@ -33,9 +34,8 @@ get_filters(Req) ->
     end.
 
 websocket_init(#state{table=Table} = State) ->
-    lager:debug("Feed ~p connected", [Table]),
     ok = pg2:join({feed, Table}, self()),
-    {ok, State}.
+    {reply, {text, encoded_records(State)}, State}.
 
 websocket_handle({ping, _}, State) ->
     % no action needed as server handles pings automatically
@@ -44,14 +44,10 @@ websocket_handle(Data, State) ->
     lager:warning("Unknown handle ~w", [Data]),
     {ok, State}.
 
-websocket_info({update, Scope}, #state{table=Table, match=Match}=State) ->
+websocket_info({update, Scope}, #state{match=Match}=State) ->
     case lists_match(tuple_to_list(Scope), tuple_to_list(Match)) of
         true ->
-            Records =
-                lists:map(
-                    fun(Rec)-> build_record(Rec, State) end,
-                    mnesia:dirty_select(Table, [{Match, [], ['$_']}])),
-            {reply, {text, jsx:encode(Records)}, State};
+            {reply, {text, encoded_records(State)}, State};
         false ->
             {ok, State}
     end;
@@ -82,14 +78,20 @@ notify(Scope) ->
                 List)
     end.
 
+encoded_records(State) ->
+    jsx:encode(matched_records(State)).
+
+matched_records(#state{table=Table, match=Match}=State) ->
+    lists:map(
+        fun(Rec)-> build_record(Rec, State) end,
+        mnesia:dirty_select(Table, [{Match, [], ['$_']}])).
+
 build_record(Rec, #state{fields=Fields, module=Module, auth_fields=AuthFields}) ->
     apply(Module, build, [
         maps:from_list(
             lists:filter(
-                fun
-                    % the module may not removed the null entries
-                    ({_, undefined}) -> false;
-                    ({Name, _}) -> lorawan_admin:auth_field(Name, AuthFields)
+                fun({Name, _}) ->
+                    lorawan_admin:auth_field(Name, AuthFields)
                 end,
                 lists:zip(Fields, tl(tuple_to_list(Rec)))))
         ]).

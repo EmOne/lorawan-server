@@ -8,6 +8,8 @@
 
 -export([init/1, handle_join/3, handle_uplink/4, handle_rxq/5, handle_delivery/3]).
 -export([handle_downlink/2]).
+% for internal
+-export([send_class_c/4]).
 
 -include("lorawan.hrl").
 -include("lorawan_db.hrl").
@@ -43,7 +45,8 @@ handle_uplink({Network, #profile{app=AppID}, #node{devaddr=DevAddr}=Node}, _RxQ,
             {error, {unknown_application, AppID}}
     end.
 
-handle_uplink0(#handler{app=AppID, uplink_fields=Fields}=Handler, Network, Node, Frame) ->
+handle_uplink0(#handler{app=AppID, parse_uplink=Parse, uplink_fields=Fields}=Handler,
+        Network, Node, #frame{data=Data}=Frame) ->
     Vars = parse_uplink(Handler, Network, Node, Frame),
     case any_is_member([<<"freq">>, <<"datr">>, <<"codr">>, <<"best_gw">>,
             <<"mac">>, <<"lsnr">>, <<"rssi">>, <<"all_gw">>], Fields) of
@@ -51,7 +54,8 @@ handle_uplink0(#handler{app=AppID, uplink_fields=Fields}=Handler, Network, Node,
             % we have to wait for the rx quality indicators
             {ok, {Handler, Vars}};
         false ->
-            lorawan_backend_factory:uplink(AppID, Node, Vars),
+            lorawan_backend_factory:uplink(AppID, Node,
+                data_to_fields(AppID, Parse, Vars, Data)),
             {ok, undefined}
     end.
 
@@ -60,8 +64,11 @@ handle_rxq({_Network, _Profile, #node{devaddr=DevAddr}},
     % we did already handle this uplink
     lorawan_application:send_stored_frames(DevAddr, Port);
 handle_rxq({_Network, #profile{app=AppID}, #node{devaddr=DevAddr}=Node},
-        Gateways, _WillReply, #frame{port=Port}, {#handler{uplink_fields=Fields}, Vars}) ->
-    lorawan_backend_factory:uplink(AppID, Node, parse_rxq(Gateways, Fields, Vars)),
+        Gateways, _WillReply, #frame{port=Port, data=Data},
+        {#handler{parse_uplink=Parse, uplink_fields=Fields}, Vars}) ->
+    Vars2 = parse_rxq(Gateways, Fields, Vars),
+    lorawan_backend_factory:uplink(AppID, Node,
+        data_to_fields(AppID, Parse, Vars2, Data)),
     lorawan_application:send_stored_frames(DevAddr, Port).
 
 any_is_member(_List1, undefined) ->
@@ -73,12 +80,11 @@ any_is_member(List1, List2) ->
         end,
         List1).
 
-parse_uplink(#handler{app=AppID, payload=Payload, parse_uplink=Parse, uplink_fields=Fields},
+parse_uplink(#handler{app=AppID, payload=Payload, uplink_fields=Fields},
         #network{netid=NetID},
         #node{appargs=AppArgs, devstat=DevStat},
         #frame{devaddr=DevAddr, fcnt=FCnt, port=Port, data=Data}) ->
-    Vars =
-        vars_add(netid, NetID, Fields,
+    vars_add(netid, NetID, Fields,
         vars_add(app, AppID, Fields,
         vars_add(devaddr, DevAddr, Fields,
         vars_add(deveui, get_deveui(DevAddr), Fields,
@@ -88,8 +94,7 @@ parse_uplink(#handler{app=AppID, payload=Payload, parse_uplink=Parse, uplink_fie
         vars_add(port, Port, Fields,
         vars_add(data, Data, Fields,
         vars_add(datetime, calendar:universal_time(), Fields,
-        parse_payload(Payload, Data))))))))))),
-    data_to_fields(AppID, Parse, Vars, Data).
+        parse_payload(Payload, Data))))))))))).
 
 parse_rxq(Gateways, Fields, Vars) ->
     {MAC1, #rxq{freq=Freq, datr=Datr, codr=Codr, rssi=RSSI1, lsnr=SNR1}} = hd(Gateways),
@@ -209,8 +214,7 @@ send_downlink(Handler, #{deveui := DevEUI}, Time, TxData) ->
         [Device] ->
             [Node] = mnesia:dirty_read(node, Device#device.node),
             % class C downlink to an explicit node
-            purge_frames(Handler, Node, TxData),
-            lorawan_handler:downlink(Node, Time, TxData)
+            try_class_c(Handler, Node, Time, TxData)
     end;
 send_downlink(Handler, #{devaddr := DevAddr}, undefined, TxData) ->
     case mnesia:dirty_read(node, DevAddr) of
@@ -233,8 +237,7 @@ send_downlink(Handler, #{devaddr := DevAddr}, Time, TxData) ->
             end;
         [Node] ->
             % class C downlink to an explicit node
-            purge_frames(Handler, Node, TxData),
-            lorawan_handler:downlink(Node, Time, TxData)
+            try_class_c(Handler, Node, Time, TxData)
     end;
 send_downlink(Handler, #{app := AppID}, undefined, TxData) ->
     % downlink to a group
@@ -250,12 +253,34 @@ send_downlink(Handler, #{app := AppID}, Time, TxData) ->
     filter_group_responses(AppID,
         lists:map(
             fun(Node) ->
-                purge_frames(Handler, Node, TxData),
-                lorawan_handler:downlink(Node, Time, TxData)
+                try_class_c(Handler, Node, Time, TxData)
             end,
             lorawan_backend_factory:nodes_with_backend(AppID)));
 send_downlink(_Handler, Else, _Time, _TxData) ->
     lager:error("Unknown downlink target: ~p", [Else]).
+
+try_class_c(Handler, #node{devaddr=DevAddr, profile=ProfID, last_rx=LastRx}=Node, Time, TxData) ->
+    {atomic, {ok, #network{rx2_delay=Delay}=Network, Profile}} =
+        mnesia:transaction(
+            fun() ->
+                lorawan_mac:load_profile(ProfID)
+            end),
+    SecSinceLast =
+        calendar:datetime_to_gregorian_seconds(calendar:universal_time())
+            - calendar:datetime_to_gregorian_seconds(LastRx),
+    if
+        SecSinceLast < Delay ->
+            lager:debug("~s delaying Class C downlink", [lorawan_utils:binary_to_hex(DevAddr)]),
+            % the node recently sent a Class A uplink
+            {ok, _} = timer:apply_after(Delay*1000, ?MODULE, send_class_c, [{Network, Profile, Node}, Handler, Time, TxData]),
+            ok;
+        true ->
+            send_class_c({Network, Profile, Node}, Handler, Time, TxData)
+    end.
+
+send_class_c({Network, Profile, Node}, Handler, Time, TxData) ->
+    purge_frames(Handler, Node, TxData),
+    lorawan_handler:downlink({Network, Profile, Node}, Time, TxData).
 
 purge_frames(#handler{downlink_expires = <<"superseded">>}=Handler,
         #node{devaddr=DevAddr}=Node, #txdata{port=Port}) ->
@@ -281,13 +306,24 @@ filter_group_responses(_AppID, List) ->
         ok, List).
 
 parse_payload(<<"ascii">>, Data) ->
-    #{text => Data};
+    case io_lib:printable_list(binary_to_list(Data)) of
+        true ->
+            #{text => Data};
+        false ->
+            lager:error("Non ASCII string: ~p", [Data]),
+            #{}
+    end;
 parse_payload(<<"cayenne">>, Data) ->
     cayenne_decode(Data);
+parse_payload(<<"cbor">>, Data) ->
+    case cbor:decode(Data) of
+        Map when is_map(Map) -> Map;
+        _ -> #{value => Data}
+    end;
 % TODO: IEEE1888 decode parse
 % parse_payload(<<"ieee1888">>, Data) ->
 %    ieee1888_decode(Data);
-parse_payload(None, _Data) when None == <<>>; None == undefined ->
+parse_payload(Custom, _Data) when Custom == <<"custom">>; Custom == undefined ->
     #{};
 parse_payload(Else, _Data) ->
     lager:error("Unknown payload: ~p", [Else]),

@@ -27,6 +27,8 @@ To create a new handler you need to set:
  - **Payload** format for automatic decoding
    - **ASCII Text**
    - [**Cayenne LPP**](https://github.com/myDevicesIoT/cayenne-docs/blob/master/docs/LORA.md)
+   - [**CBOR**](https://tools.ietf.org/html/rfc7049)
+   - **Custom Binary** decoded by the **Parse Uplink** function
  - **Parse Uplink** function to extract additional data fields from the uplink frame
  - **Event Fields** that will be forwarded to the backend Connector
  - **Parse Event** function to amend event data fields
@@ -147,14 +149,13 @@ applications the following fields:
 
 ## Payload
 
-The server can auto-parse some well-known data formats.
-
-To parse a custom format leave the *Payload* field undefined and write own
-*Parse Uplink* function.
+The server can auto-parse some well-known data formats. In such case you don't
+need to write own *Parse Uplink* function.
 
 ### ASCII Text
 
-The payload will get stored into the `text` field as ASII characters.
+The payload will get stored into the `text` field as ASCII characters. This can
+can be used only when the device directly sends human readable text.
 
 ### Cayenne Low Power Payload (LPP)
 
@@ -220,6 +221,11 @@ For example:
 </tbody>
 </table>
 
+### Custom Binary
+
+To parse a custom format you need to write own *Parse Uplink* function.
+
+
 ## Parse Uplink
 
 The *Parse Uplink* is an Erlang function that converts binary data to custom
@@ -270,15 +276,29 @@ fun(Fields, <<LED, Press:16, Temp:16, AltBar:16, Batt, Lat:24, Lon:24, AltGps:16
   [
     Fields#{led => LED},
     Fields#{pressure => Press},
-    Fields#{temp => Temp/100},
-    Fields#{alt_bar => AltBar},
-    Fields#{batt => Batt}
+    Fields#{temp => Temp/100}
   ]
 end.
 ```
 
-This will generate 5 messages, each including the selected **Uplink Fields**
+This will generate 3 messages, each including the selected **Uplink Fields**
 plus one data field.
+
+To send one message with a list of expressions, send a list-in-list, for example:
+
+```erlang
+fun(Fields, <<LED, Press:16, Temp:16, AltBar:16, Batt, Lat:24, Lon:24, AltGps:16>>) ->
+  [
+    [
+      Fields#{led => LED},
+      Fields#{pressure => Press},
+      Fields#{temp => Temp/100}
+    ]
+  ]
+end.
+```
+
+This will generate one message containing a list of 3 items.
 
 The `<<A, B, C>>` used to match the frame payload is a binary pattern, where A,
 B, C are "variables" corresponding to the values encoded in the binary. Erlang

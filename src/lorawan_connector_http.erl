@@ -12,7 +12,7 @@
 
 -include("lorawan_db.hrl").
 
--record(state, {conn, pid, mref, ready, streams, publish_uplinks, publish_events, auth, nc}).
+-record(state, {conn, pid, mref, ready, streams, prefix, publish_uplinks, publish_events, auth, nc}).
 
 start_connector(#connector{connid=Id, received=Received}=Connector) ->
     case lorawan_connector:pattern_for_cowboy(Received) of
@@ -65,7 +65,7 @@ handle_info({uplink, _Node, _Vars0}, #state{publish_uplinks=PatPub}=State)
 handle_info({uplink, _Node, Vars0}, #state{conn=Conn}=State) ->
     case ensure_connected(ensure_gun(State)) of
         {ok, State2} ->
-            {noreply, handle_uplink(Vars0, State2)};
+            {noreply, handle_uplinks(Vars0, State2)};
         {error, State2} ->
             lager:warning("Connector ~p not connected, uplink lost", [Conn#connector.connid]),
             {noreply, State2}
@@ -83,7 +83,7 @@ handle_info({event, _Node, Vars0}, #state{conn=Conn}=State) ->
             {noreply, State2}
     end;
 
-handle_info({gun_up, C, http}, State=#state{pid=C}) ->
+handle_info({gun_up, C, _Proto}, State=#state{pid=C}) ->
     {noreply, State#state{ready=true}};
 handle_info({gun_down, C, _Proto, _Reason, Killed, Unprocessed},
         State=#state{pid=C, streams=Streams}) ->
@@ -124,6 +124,17 @@ handle_info({gun_data, C, StreamRef, Fin, _Data}, State=#state{pid=C}) ->
 handle_info({'DOWN', _MRef, process, C, Reason}, #state{conn=Conn, pid=C}=State) ->
     lager:warning("Connector ~s failed: ~p", [Conn#connector.connid, Reason]),
     {noreply, State#state{pid=undefined}};
+
+handle_info({status, From}, #state{conn=#connector{uri= <<"http:">>}, pid=undefined}=State) ->
+    From ! {status, []},
+    {noreply, State};
+handle_info({status, From}, #state{conn=#connector{connid=Id, app=App, uri=Uri}}=State) ->
+    From ! {status, [
+        set_status(State,
+            #{module => <<"http">>, pid => lorawan_connector:pid_to_binary(self()),
+                connid => Id, app => App, uri => Uri})]},
+    {noreply, State};
+
 handle_info(Unknown, State) ->
     lager:debug("Unknown message: ~p", [Unknown]),
     {noreply, State}.
@@ -146,15 +157,18 @@ ensure_gun(#state{conn=#connector{uri= <<"http:">>}, pid=undefined}=State) ->
     State;
 ensure_gun(#state{conn=#connector{connid=ConnId, uri=Uri}, pid=undefined}=State) ->
     lager:debug("Connecting ~s to ~s", [ConnId, Uri]),
-    {ok, ConnPid} =
+    {ConnPid, Prefix} =
         case http_uri:parse(binary_to_list(Uri), [{scheme_defaults, [{http, 80}, {https, 443}]}]) of
-            {ok, {http, _UserInfo, HostName, Port, _Path, _Query}} ->
-                gun:open(HostName, Port);
-            {ok, {https, _UserInfo, HostName, Port, _Path, _Query}} ->
-                gun:open(HostName, Port, #{transport=>ssl})
+            {ok, {http, _UserInfo, HostName, Port, Path, _Query}} ->
+                {ok, Pid} = gun:open(HostName, Port),
+                {Pid, Path};
+            {ok, {https, _UserInfo, HostName, Port, Path, _Query}} ->
+                Opts = application:get_env(lorawan_server, ssl_options, []),
+                {ok, Pid} = gun:open(HostName, Port, #{transport=>ssl, transport_opts=>Opts}),
+                {Pid, Path}
         end,
     MRef = monitor(process, ConnPid),
-    State#state{pid=ConnPid, mref=MRef, ready=false, streams=#{}}.
+    State#state{pid=ConnPid, mref=MRef, ready=false, streams=#{}, prefix=Prefix}.
 
 ensure_connected(#state{ready=true}=State) ->
     {ok, State};
@@ -174,10 +188,13 @@ disconnect(undefined) ->
 disconnect(ConnPid) ->
     gun:close(ConnPid).
 
-handle_uplink(Vars0, State) when is_list(Vars0) ->
+handle_uplinks(Vars0, State) when is_list(Vars0) ->
     lists:foldl(
         fun(V0, S) -> handle_uplink(V0, S) end,
         State, Vars0);
+handle_uplinks(Vars0, State) ->
+    handle_uplink(Vars0, State).
+
 handle_uplink(Vars0, #state{conn=#connector{format=Format}, publish_uplinks=Publish}=State) ->
     {ContentType, Body} = encode_uplink(Format, Vars0),
     send_publish(lorawan_admin:build(Vars0), Publish, ContentType, Body, State).
@@ -186,8 +203,8 @@ handle_event(Vars0, #state{publish_events=Publish}=State) ->
     Vars = lorawan_admin:build(Vars0),
     send_publish(Vars, Publish, <<"application/json">>, jsx:encode(Vars), State).
 
-send_publish(Vars, Publish, ContentType, Body, #state{conn=Conn, auth=AuthP}=State) ->
-    URI = lorawan_connector:fill_pattern(Publish, Vars),
+send_publish(Vars, Publish, ContentType, Body, #state{conn=Conn, prefix=Prefix, auth=AuthP}=State) ->
+    URI = binary:list_to_bin([Prefix | lorawan_connector:fill_pattern(Publish, Vars)]),
     [User, Pass] = lorawan_connector:fill_pattern(AuthP, Vars),
     case Conn of
         #connector{auth = <<"token">>} ->
@@ -257,5 +274,12 @@ handle_authenticate0(digest, Value, URI, [Name, Pass], Body, State=#state{nc=Nc0
                 {<<"response">>, Response}, {<<"opaque">>, Opaque}, {<<"qop">>, Qop},
                 {<<"nc">>, Nc}, {<<"cnonce">>, CNonce}])], State#state{nc=Nc0+1}}
     end.
+
+set_status(#state{pid=Pid, ready=true}, Map) when is_pid(Pid) ->
+    Map#{status => <<"connected">>};
+set_status(#state{pid=Pid, ready=false}, Map) when is_pid(Pid) ->
+    Map#{status => <<"connecting">>};
+set_status(#state{pid=undefined}, Map) ->
+    Map#{status => <<"disconnected">>}.
 
 % end of file

@@ -97,6 +97,7 @@
     group :: nonempty_string(),
     app :: binary(),
     appid :: any(),
+    join :: 0..2,
     fcnt_check :: integer(),
     txwin :: integer(),
     adr_mode :: 0..2, % server requests
@@ -113,7 +114,7 @@
     appeui :: eui(),
     appkey :: seckey(),
     desc :: 'undefined' | string(),
-    last_join :: calendar:datetime(),
+    last_joins :: [{calendar:datetime(), binary()}],
     node :: devaddr()}).
 
 -type devstat() :: {calendar:datetime(), integer(), integer(), integer()}.
@@ -159,8 +160,10 @@
     app :: binary(),
     format :: binary(),
     uri :: binary(),
+    publish_qos :: 0 | 1 | 2,
     publish_uplinks :: 'undefined' | binary(),
     publish_events :: 'undefined' | binary(),
+    subscribe_qos :: 0 | 1 | 2,
     subscribe :: 'undefined' | binary(),
     received :: 'undefined' | binary(),
     enabled :: boolean(),
@@ -205,6 +208,7 @@
     devaddr :: devaddr(),
     confirmed :: boolean(),
     phypayload :: binary(),
+    sent_count :: integer(),
     receipt :: any()}).
 
 -record(rxframe, {

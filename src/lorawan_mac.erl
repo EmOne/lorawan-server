@@ -5,7 +5,7 @@
 %
 -module(lorawan_mac).
 
--export([ingest_frame/1, handle_accept/4, load_profile/1, encode_unicast/4, encode_multicast/2]).
+-export([ingest_frame/2, handle_accept/4, load_profile/1, encode_unicast/4, encode_multicast/2]).
 % for unit testing
 -export([cipher/5, b0/4]).
 -import(lorawan_utils, [binary_to_hex/1, hex_to_binary/1, reverse/1]).
@@ -16,19 +16,22 @@
 -include("lorawan_db.hrl").
 
 % TODO complete type specification
--spec ingest_frame(binary()) -> any().
-ingest_frame(PHYPayload) ->
+-spec ingest_frame(binary(), binary()) -> any().
+ingest_frame(MAC, <<MType:3, _:3, 0:2, _/binary>> = PHYPayload) when byte_size(PHYPayload) > 4 ->
     Size = byte_size(PHYPayload)-4,
     <<Msg:Size/binary, MIC:4/binary>> = PHYPayload,
     {atomic, Res} =
         mnesia:transaction(
             fun() ->
-                ingest_frame0(Msg, MIC)
+                ingest_frame0(MAC, MType, Msg, MIC)
             end),
-    Res.
+    Res;
+ingest_frame(MAC, PHYPayload) ->
+    lager:warning("gateway ~s received unknown frame protocol: ~w", [binary_to_hex(MAC), PHYPayload]),
+    ignore.
 
-ingest_frame0(<<2#000:3, _:5,
-        AppEUI0:8/binary, DevEUI0:8/binary, DevNonce:2/binary>> = Msg, MIC) ->
+ingest_frame0(MAC, 2#000, <<_, AppEUI0:8/binary, DevEUI0:8/binary,
+        DevNonce:2/binary>> = Msg, MIC) ->
     {AppEUI, DevEUI} = {reverse(AppEUI0), reverse(DevEUI0)},
     case mnesia:read(device, DevEUI, read) of
         [] ->
@@ -38,14 +41,14 @@ ingest_frame0(<<2#000:3, _:5,
         [D] ->
             case aes_cmac:aes_cmac(D#device.appkey, Msg, 4) of
                 MIC ->
-                    handle_join(D, DevNonce);
+                    verify_join(MAC, D, DevNonce);
                 _MIC2 ->
                     {error, {device, DevEUI}, bad_mic}
             end
     end;
-ingest_frame0(<<MType:3, _:5,
-        DevAddr0:4/binary, ADR:1, ADRACKReq:1, ACK:1, _RFU:1, FOptsLen:4,
-        FCnt:16/little-unsigned-integer, FOpts:FOptsLen/binary, Body/binary>> = Msg, MIC)
+ingest_frame0(MAC, MType, <<_, DevAddr0:4/binary, ADR:1, ADRACKReq:1, ACK:1, _RFU:1,
+        FOptsLen:4, FCnt:16/little-unsigned-integer, FOpts:FOptsLen/binary,
+        Body/binary>> = Msg, MIC)
         when MType == 2#010; MType == 2#011; MType == 2#100; MType == 2#101 ->
     <<Confirm:1, _:2>> = <<MType:3>>,
     DevAddr = reverse(DevAddr0),
@@ -53,13 +56,13 @@ ingest_frame0(<<MType:3, _:5,
         <<>> -> {undefined, <<>>};
         <<FPort:8, FPayload/binary>> -> {FPort, FPayload}
     end,
-    ingest_data_frame(MType, Msg, FOpts, FRMPayload, MIC,
+    ingest_data_frame(MAC, MType, Msg, FOpts, FRMPayload, MIC,
         #frame{conf=Confirm, devaddr=DevAddr, adr=ADR, adr_ack_req=ADRACKReq, ack=ACK, fcnt=FCnt, port=Port});
-ingest_frame0(Msg, _MIC) ->
-    lager:debug("Unknown frame: ~p", [Msg]),
-    {error, unknown_frame}.
+ingest_frame0(MAC, MType, Msg, _MIC) ->
+    lager:warning("gateway ~s received bad frame (mtype ~.2B): ~p", [binary_to_hex(MAC), MType, Msg]),
+    ignore.
 
-ingest_data_frame(MType, Msg, FOpts, FRMPayload, MIC,
+ingest_data_frame(_MAC, MType, Msg, FOpts, FRMPayload, MIC,
         #frame{devaddr=DevAddr, fcnt=FCnt, port=Port}=Frame)
         when MType == 2#010; MType == 2#100 ->
     case accept_node_frame(DevAddr, FCnt) of
@@ -67,6 +70,8 @@ ingest_data_frame(MType, Msg, FOpts, FRMPayload, MIC,
             case aes_cmac:aes_cmac(Node#node.nwkskey,
                     <<(b0(MType band 1, DevAddr, Node#node.fcntup, byte_size(Msg)))/binary, Msg/binary>>, 4) of
                 MIC ->
+                    ok = lorawan_admin:write(
+                            ensure_used_fields(Network, Node)),
                     case Port of
                         0 when byte_size(FOpts) == 0 ->
                             Data = cipher(FRMPayload, Node#node.nwkskey, MType band 1, DevAddr, Node#node.fcntup),
@@ -88,29 +93,46 @@ ingest_data_frame(MType, Msg, FOpts, FRMPayload, MIC,
             lorawan_utils:throw_error({node, DevAddr}, Error, Args),
             {ignore, Frame}
     end;
-ingest_data_frame(MType, _Msg, _FOpts, _FRMPayload, _MIC, #frame{devaddr=DevAddr}=Frame) ->
-    lager:error("~p Unexpected mtype ~p", [binary_to_hex(DevAddr), MType]),
-    {ignore, Frame}.
+ingest_data_frame(MAC, MType, _Msg, _FOpts, _FRMPayload, _MIC, #frame{devaddr=DevAddr}) ->
+    lager:warning("gateway ~s received ~s downlink frame (mtype ~.2B)", [binary_to_hex(MAC), binary_to_hex(DevAddr), MType]),
+    ignore.
 
-handle_join(#device{deveui=DevEUI, profile=ProfID}=Device, DevNonce) ->
+verify_join(MAC, #device{deveui=DevEUI, profile=ProfID}=Device, DevNonce) ->
     case mnesia:read(profile, ProfID, read) of
         [] ->
             {error, {device, DevEUI}, {unknown_profile, ProfID}, aggregated};
-        [#profile{group=GroupName}=Profile] ->
-            case mnesia:read(group, GroupName, read) of
+        [#profile{join=0}] ->
+            lager:warning("gateway ~s ignored join from DevEUI ~s", [binary_to_hex(MAC), binary_to_hex(DevEUI)]),
+            ignore;
+        [#profile{join=Join}=Profile] ->
+            case known_devnonce(DevNonce, Device) of
+                true when Join == 1 ->
+                    {error, {device, DevEUI}, second_join};
+                _ ->
+                    handle_join(MAC, Profile, Device, DevNonce)
+            end
+    end.
+
+known_devnonce(_DevNonce, #device{last_joins=undefined}) ->
+    false;
+known_devnonce(DevNonce, #device{last_joins=Past}) ->
+    {_, Nonces} = lists:unzip(Past),
+    lists:member(DevNonce, Nonces).
+
+handle_join(MAC, #profile{group=GroupName}=Profile, #device{deveui=DevEUI}=Device, DevNonce) ->
+    case mnesia:read(group, GroupName, read) of
+        [] ->
+            {error, {device, DevEUI}, {unknown_group, GroupName}, aggregated};
+        [#group{can_join=false}] ->
+            lager:warning("gateway ~s ignored join from DevEUI ~s", [binary_to_hex(MAC), binary_to_hex(DevEUI)]),
+            ignore;
+        [#group{network=NetName, subid=SubID}] ->
+            case mnesia:read(network, NetName, read) of
                 [] ->
-                    {error, {device, DevEUI}, {unknown_group, GroupName}, aggregated};
-                [#group{can_join=false}] ->
-                    lager:debug("Join ignored from DevEUI ~s", [binary_to_hex(DevEUI)]),
-                    ignore;
-                [#group{network=NetName, subid=SubID}] ->
-                    case mnesia:read(network, NetName, read) of
-                        [] ->
-                            {error, {device, DevEUI}, {unknown_network, NetName}, aggregated};
-                        [#network{netid=NetID}=Network] ->
-                            DevAddr = get_devaddr(Device, NetID, SubID),
-                            {join, {Network, Profile, Device}, DevAddr, DevNonce}
-                    end
+                    {error, {device, DevEUI}, {unknown_network, NetName}, aggregated};
+                [#network{netid=NetID}=Network] ->
+                    DevAddr = get_devaddr(Device, NetID, SubID),
+                    {join, {Network, Profile, Device}, DevAddr, DevNonce}
             end
     end.
 
@@ -157,8 +179,6 @@ accept_node_frame(DevAddr, FCnt) ->
                 {ok, {Network, Profile, Node}} ->
                     case check_fcnt({Network, Profile, Node}, FCnt) of
                         {ok, Fresh, Node2} ->
-                            ok = lorawan_admin:write(
-                                    ensure_used_fields(Network, Node2)),
                             {ok, Fresh, {Network, Profile, Node2}};
                         Error ->
                             Error
@@ -364,7 +384,7 @@ create_node(Gateways, {#network{netid=NetID}=Network, Profile, #device{deveui=De
         padded(16, <<16#02, AppNonce/binary, NetID/binary, DevNonce/binary>>)),
 
     [Device] = mnesia:read(device, DevEUI, write),
-    Device2 = Device#device{node=DevAddr, last_join=calendar:universal_time()},
+    Device2 = append_join({calendar:universal_time(), DevNonce}, Device#device{node=DevAddr}),
     ok = mnesia:write(Device2),
 
     lorawan_utils:throw_info({device, DevEUI}, {join, binary_to_hex(DevAddr)}),
@@ -391,6 +411,13 @@ create_node(Gateways, {#network{netid=NetID}=Network, Profile, #device{deveui=De
         end,
     ok = lorawan_admin:write(Node2),
     Node2.
+
+append_join(Item, #device{last_joins=undefined}=Device) ->
+    Device#device{
+        last_joins=[Item]};
+append_join(Item, #device{last_joins=List}=Device) ->
+    Device#device{
+        last_joins=lists:sublist([Item | List], 5)}.
 
 initial_adr(#network{init_chans=Chans, max_power=MaxPower}) ->
     {MaxPower, 0, Chans}.
