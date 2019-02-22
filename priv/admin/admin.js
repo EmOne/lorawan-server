@@ -201,7 +201,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .targetField(nga.field('name'))
             .validation({ required: true }),
         nga.field('email').label('E-Mail')
-            .validation({ pattern: '[^@\s]+@[^@\s]+\.[^@\s]+' }),
+            .validation({ pattern: '[^@\\s]+@[^@\\s]+\\.[^@\\s]+' }),
         nga.field('send_alerts', 'boolean')
             .validation({ required: true })
             .defaultValue(true)
@@ -1279,9 +1279,20 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
 }]);
 
 function map_memstats(value, entry) {
+    var free = 0;
+
     if ('memory.free_memory' in entry) {
-        var free = 100 * entry['memory.free_memory'] / entry['memory.total_memory'];
-        return bytesToSize(entry['memory.free_memory']) + " (" + free.toFixed(0) + "%)";
+        free += entry['memory.free_memory'];
+    }
+    if ('memory.buffered_memory' in entry) {
+        free += entry['memory.buffered_memory'];
+    }
+    if ('memory.cached_memory' in entry) {
+        free += entry['memory.cached_memory'];
+    }
+    if ('memory.total_memory' in entry) {
+        var free_percentage = 100 * free / entry['memory.total_memory'];
+        return bytesToSize(free) + " (" + free_percentage.toFixed(0) + "%)";
     }
 }
 
@@ -1630,7 +1641,7 @@ return {
             end: new Date(),
             rollingMode: {follow: true, offset: 0.95},
             selectable: false,
-            maxHeight: "300px",
+            height: "300px",
             zoomMax: 2592000000,
             zoomMin: 1000
         };
