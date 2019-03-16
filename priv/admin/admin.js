@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+ * Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
  * All rights reserved.
  * Distributed under the terms of the MIT License. See the LICENSE file.
  */
@@ -1022,6 +1022,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 { value: 'devaddr', label: 'devaddr' },
                 { value: 'deveui', label: 'deveui' },
                 { value: 'appargs', label: 'appargs' },
+                { value: 'desc', label: 'desc' },
                 { value: 'battery', label: 'battery' },
                 { value: 'fcnt', label: 'fcnt' },
                 { value: 'port', label: 'port' },
@@ -1035,7 +1036,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 { value: 'mac', label: 'mac' },
                 { value: 'lsnr', label: 'lsnr' },
                 { value: 'rssi', label: 'rssi' },
-                { value: 'all_gw', label: 'all_gw' }
+                { value: 'all_gw', label: 'all_gw' },
+                { value: 'gpsalt', label: 'gpsalt' },
+                { value: 'gpspos', label: 'gpspos' }
             ]),
         nga.field('payload', 'choice')
             .choices([

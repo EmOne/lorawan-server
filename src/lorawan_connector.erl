@@ -1,5 +1,5 @@
 %
-% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
@@ -38,13 +38,13 @@ pattern_for_cowboy(<<"/", _/binary>>=URI) ->
 pattern_for_cowboy(_Error) ->
     error.
 
--type fill_pattern_t() :: 'undefined' | {binary(), [{integer(), integer()}]}.
+-type fill_pattern_t() :: {binary(), [{integer(), integer()}]}.
 -spec prepare_filling('undefined' | binary() | [binary()]) -> fill_pattern_t() | [fill_pattern_t()].
 prepare_filling(List) when is_list(List) ->
     lists:map(
         fun(Item) -> prepare_filling(Item) end, List);
 prepare_filling(undefined) ->
-    undefined;
+    ?EMPTY_PATTERN;
 prepare_filling(Pattern) ->
     case re:run(Pattern, "{[^}]+}", [global]) of
         {match, Match} ->
@@ -60,7 +60,7 @@ fill_pattern(List, Values) when is_list(List) ->
     lists:map(
         fun(Item) -> fill_pattern(Item, Values) end, List);
 fill_pattern(undefined, _) ->
-    undefined;
+    <<>>;
 fill_pattern({Pattern, []}, _) ->
     Pattern;
 fill_pattern({Pattern, Vars}, Values) ->
@@ -92,7 +92,7 @@ get_value(_Var, _Else) ->
     undefined.
 
 prepare_matching(undefined) ->
-    undefined;
+    ?EMPTY_PATTERN;
 prepare_matching(Pattern) ->
     EPattern0 = binary:replace(Pattern, <<".">>, <<"\\">>, [global, {insert_replaced, 1}]),
     EPattern = binary:replace(EPattern0, <<"#">>, <<".*">>, [global]),
@@ -109,6 +109,10 @@ prepare_matching(Pattern) ->
             {Pattern, []}
     end.
 
+match_pattern(<<>>, {<<>>, _}) ->
+    #{};
+match_pattern(_NonEmpty, {<<>>, _}) ->
+    undefined;
 match_pattern(Topic, {Pattern, Vars}) ->
     case re:run(Topic, Pattern, [global, {capture, all, binary}]) of
         {match, [[_Head | Matches]]} ->
@@ -120,7 +124,7 @@ match_pattern(Topic, {Pattern, Vars}) ->
 match_vars(Topic, Pattern) ->
     case match_pattern(Topic, Pattern) of
         undefined ->
-            lager:error("Topic ~w does not match pattern ~w", [Topic, Pattern]),
+            lager:error("Topic ~p does not match pattern ~p", [Topic, Pattern]),
             #{};
         Vars ->
             lorawan_admin:parse(Vars)
@@ -187,6 +191,7 @@ value_to_binary(Term) when is_list(Term) -> list_to_binary(Term);
 value_to_binary(Term) when is_binary(Term) -> Term;
 value_to_binary(Term) -> list_to_binary(io_lib:print(Term)).
 
+-spec decode_and_downlink(#connector{}, binary(), map()) -> 'ok' | {'error', any()}.
 decode_and_downlink(#connector{app=App, format=Format}, Msg, Bindings) ->
     case decode(Format, Msg) of
         {ok, Vars} ->
@@ -237,6 +242,8 @@ matchtst(Vars, Pattern, Topic) ->
 
 pattern_test_()-> [
     matchtst(#{}, <<"normal/uri">>, <<"normal/uri">>),
+    matchtst(#{}, <<>>, <<>>),
+    matchtst(undefined, <<>>, <<"any/uri">>),
     matchtst(undefined, <<"normal/uri">>, <<"another/uri">>),
     matchtst(#{devaddr => <<"00112233">>}, <<"{devaddr}">>, <<"00112233">>),
     matchtst(#{devaddr => <<"00112233">>}, <<"prefix.{devaddr}">>, <<"prefix.00112233">>),

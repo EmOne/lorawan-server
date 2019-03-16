@@ -1,5 +1,5 @@
 %
-% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
@@ -83,7 +83,7 @@ any_is_member(List1, List2) ->
 parse_uplink(#handler{app=AppName, payload=Payload, uplink_fields=Fields},
         {#network{netid=NetID},
         #profile{appid=AppID},
-        #node{appargs=AppArgs, devstat=DevStat}},
+        #node{appargs=AppArgs, desc=Desc, devstat=DevStat}},
         #frame{devaddr=DevAddr, fcnt=FCnt, port=Port, data=Data}) ->
     vars_add(netid, NetID, Fields,
         vars_add(app, AppName, Fields,
@@ -91,19 +91,23 @@ parse_uplink(#handler{app=AppName, payload=Payload, uplink_fields=Fields},
         vars_add(devaddr, DevAddr, Fields,
         vars_add(deveui, get_deveui(DevAddr), Fields,
         vars_add(appargs, AppArgs, Fields,
+        vars_add(desc, Desc, Fields,
         vars_add(battery, get_battery(DevStat), Fields,
         vars_add(fcnt, FCnt, Fields,
         vars_add(port, Port, Fields,
         vars_add(data, Data, Fields,
         vars_add(datetime, calendar:universal_time(), Fields,
-        parse_payload(Payload, Data)))))))))))).
+        parse_payload(Payload, Data))))))))))))).
 
 parse_rxq(Gateways, Fields, Vars) ->
     {MAC1, #rxq{freq=Freq, datr=Datr, codr=Codr, rssi=RSSI1, lsnr=SNR1}} = hd(Gateways),
     RxQ =
         lists:map(
             fun({MAC, #rxq{time=Time, tmms=TmMs, rssi=RSSI, lsnr=SNR}}) ->
-                #{mac=>MAC, rssi=>RSSI, lsnr=>SNR, time=>Time, tmms=>TmMs}
+                vars_add(desc, get_dbfield(gateway, MAC, #gateway.desc), Fields,
+                    vars_add(gpsalt, get_dbfield(gateway, MAC, #gateway.gpsalt), Fields,
+                    vars_add(gpspos, get_dbfield(gateway, MAC, #gateway.gpspos), Fields,
+                    #{mac=>MAC, rssi=>RSSI, lsnr=>SNR, time=>Time, tmms=>TmMs})))
             end,
             Gateways),
     vars_add(freq, Freq, Fields,
@@ -138,6 +142,14 @@ get_battery([{_DateTime, Battery, _Margin, _MaxSNR}|_]) ->
 get_battery(_Else) ->
     undefined.
 
+get_dbfield(DBase, Key, Field) ->
+    case mnesia:dirty_read(DBase, Key) of
+        [Record] ->
+            element(Field, Record);
+        _Else ->
+            undefined
+    end.
+
 data_to_fields(AppId, {_, Fun}, Vars, Data) when is_function(Fun) ->
     try Fun(Vars, Data)
     catch
@@ -162,18 +174,20 @@ send_event(Event, Vars0, #handler{app=AppName, event_fields=Fields, parse_event=
         vars_add(event, Event, Fields,
         vars_add(datetime, calendar:universal_time(), Fields,
         case DeviceOrNode of
-            {#profile{appid=AppID}, #device{deveui=DevEUI, appargs=AppArgs}, DevAddr} ->
+            {#profile{appid=AppID}, #device{deveui=DevEUI, appargs=AppArgs, desc=Desc}, DevAddr} ->
                 vars_add(appid, AppID, Fields,
                 vars_add(devaddr, DevAddr, Fields,
                 vars_add(deveui, DevEUI, Fields,
                 vars_add(appargs, AppArgs, Fields,
-                Vars0))));
-            {#profile{appid=AppID}, #node{devaddr=DevAddr, appargs=AppArgs}} ->
+                vars_add(desc, Desc, Fields,
+                Vars0)))));
+            {#profile{appid=AppID}, #node{devaddr=DevAddr, appargs=AppArgs, desc=Desc}} ->
                 vars_add(appid, AppID, Fields,
                 vars_add(devaddr, DevAddr, Fields,
                 vars_add(deveui, get_deveui(DevAddr), Fields,
                 vars_add(appargs, AppArgs, Fields,
-                Vars0))))
+                vars_add(desc, Desc, Fields,
+                Vars0)))))
         end))),
     lorawan_backend_factory:event(AppName, DeviceOrNode,
         data_to_fields(AppName, Parse, Vars, Event)).
@@ -208,6 +222,7 @@ fields_to_data(AppName, {_, Fun}, Vars) when is_function(Fun) ->
 fields_to_data(_AppName, _Else, Vars) ->
     maps:get(data, Vars, <<>>).
 
+-spec send_downlink(#handler{}, map(), any(), #txdata{}) -> 'ok' | {'error', any()}.
 send_downlink(Handler, #{deveui := DevEUI}, undefined, TxData) ->
     case mnesia:dirty_read(device, DevEUI) of
         [] ->
