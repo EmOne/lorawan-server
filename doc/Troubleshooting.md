@@ -3,9 +3,11 @@
 Overview of recent errors and warnings is provided in the server [Event List](Events.md).
 Details can be found in the server logs.
 
-The server logs are stored in `lorawan-server/log`. By default three log files are
-provided: `debug.log`, `error.log` and `crash.log`. The log messages contain date
-and time, severity (debug, info, notice, warning, error), process ID and a description.
+Depending on your installation the server logs are stored in `/var/log/lorawan-server`,
+`/var/lib/lorawan-server/log` or just `lorawan-server/log`. By default three log
+files are provided: `debug.log`, `error.log` and `crash.log`. The log messages
+contain date and time, severity (debug, info, notice, warning, error), process ID
+and a description.
 
 For example:
 ```
@@ -32,7 +34,7 @@ This may be due to:
  * Gateway misconfiguration. Check the gateway configuration includes a correct
    server IP and port (by default 1680).
  * Firewall misconfiguration. Check the server firewall does not block the port 1680.
-   See [Installation Instructions](Installation.md) for configuration guidelines.
+   See [Configuration Instructions](Configuration.md) for detailed guidelines.
 
 ### No downlink frames delivered
 
@@ -78,6 +80,14 @@ If you see strange *DevAddr* numbers from devices that you don't know, there
 may be a second network near you. You can add devices from this network into
 the list of [Ignored Nodes](Infrastructure.md).
 
+### second_join
+
+The Join request did include the same DevNonce as some of the previous requests.
+This may be cause of a faulty device or a reply attack.
+
+To join with a faulty device you may set the *Join* parameter of the device *Profile*
+to *Allowed with old Nonce*.
+
 ### bad_mic
 
 The Message Integrity Check (MIC) of a received frame has failed.
@@ -99,8 +109,9 @@ The device sent an unexpected frame counter *FCnt*. This may be because:
 If this is an exceptional case, go to the *Nodes* list and manually update the
 *FCnt Up* to the *FCnt* number.
 
-To allow ABP devices to freely reset set the *FCnt Check* to *Reset on zero*,
-but please note this weakens LoRaWAN security a bit.
+To allow ABP devices to freely reset set the *FCnt Check* to *Reset on zero*
+in the device profile, but please note this weakens LoRaWAN security a bit.
+
 It is recommended to use over-the-air-activation (OTAA) instead.
 
 ### repeated_reset
@@ -109,6 +120,26 @@ No frames were received since last OTAA join or last ABP reset. This is just a
 warning. It may be because:
  * No downlink frames delivered (see above)
  * Faulty device is periodically re-starting
+
+### not_semtech_mote
+
+The Device *Profile* defines the *semtech-mote* application, but your device
+sent some other data. It may be because:
+ * The Device *Application* is misconfigured. If you want to send the uplink
+   frames to an external application, you need to define a Backend
+   [Handler](Handlers.md) and use its name in the Device *Profile*.
+ * You have some other Mote device. Make sure your firmware uses the
+   [supported format](https://github.com/Lora-net/LoRaMac-node/blob/master/src/apps/LoRaMac/classA/LoRaMote/main.c#L207).
+
+### downlink_missed
+
+Confirmed downlink was sent, but the device indicated it did not received it.
+Depending on the application logic the downlink may be retransmitted.
+
+### downlink_expired
+
+Confirmed downlink was superseded before it could be transmitted to the device.
+See the **D/L Expires** setting of the corresponding [Handler](Handlers.md).
 
 ### prerequisite_failed
 
@@ -134,6 +165,22 @@ The problem is the Lorank8 proprietary message format. In your gateway config
 you likely have `stat_format` set to `idee_concise` or `idee_verbose`. You need
 to change `stat_format` to `semtech` to get this working.
 
+### Browser reports NS_ERROR_NET_INADEQUATE_SECURITY
+
+You are using old version of Erlang that does not support the newest ciphers
+required by HTTP/2. Erlang 20 is recommended for TLS/SSL.
+
+As a quick fix, in Mozilla you can disable the checks in `about:config`, by
+setting `network.http.spdy.enforce-tls-profile` to `false`.
+
+### Lost admin password
+
+If you forgot your admin password
+ * make sure `/var/lib/lorawan-server/.erlang.cookie` and `$HOME/.erlang.cookie` are identical
+ * connect to the cluster via remote shell by `erl -sname test -remsh lorawan@<hostname>`
+ * delete the `user` database by `mnesia:delete_table(user).`
+ * restart the server to recreate the `user` database with the default admin password
+
 
 ## Alarms
 
@@ -146,3 +193,20 @@ This indicates that the system has less than 20% of free memory.
 ### disk_almost_full
 
 This indicates there is less than 20% of free disk space.
+
+
+## Issue Reporting
+
+If this guideline didn't help you to solve your problem, feel free to report a
+new issue. For the better understanding of the issue you are encouraged to provide:
+ *  Distribution type: binary or built from source.
+ *  Hardware type: PC Server, Just PC, MacBook, MacServer, Raspberry Pi1/2/3/x, Odroid, etc.
+ *  OS type and version. Also, add the output of the `uname -a` command if you
+    are running on a sort of a Unix/Linux/MacOS system.
+ *  Your Erlang/OTP version. Can be obtained by running `erl` at the command line:
+    please provide all the text before 1> line.
+ *  If you are experiencing problems with the web-interface or seeing lots of
+    http_error lines in the log , provide npm -v and node -v output too.
+
+Get ready to provide your server's debug.log file and, in hard cases,
+the [Wireshark](https://www.wireshark.org) network capture file.

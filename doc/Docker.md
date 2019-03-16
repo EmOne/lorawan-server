@@ -12,19 +12,15 @@ docker pull gotthardp/lorawan-server:latest
 docker run --detach \
   --name lorawan \
   --hostname lorawan \
-  --rm \
+  --restart on-failure \
   --volume /path/to/local:/storage \
   --publish 8080:8080/tcp \
   --publish 1680:1680/udp \
-  --env GOOGLE_MAPS_KEY=xxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxx \
   gotthardp/lorawan-server:latest
 ```
 
 The `/path/to/local` shall point to a local directory, where the Mnesia database
 and server logs will be stored.
-
-The `GOOGLE_MAPS_KEY` is the API Key you can
-[get from Google](https://developers.google.com/maps/documentation/javascript/get-api-key).
 
 To export different port numbers change the *first* number of the `publish`
 parameter to the desired port number. The syntax is `--publish hostPort:containerPort`
@@ -44,3 +40,7 @@ docker run -d \
   --cleanup \
   lorawan
 ```
+
+In development environment you may want to start the lorawan connector with the
+`--rm` option instead of `--restart on-failure` to auto-delete old containers.
+(You cannot use both options at the same time.)

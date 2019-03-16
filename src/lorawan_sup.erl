@@ -1,5 +1,5 @@
 %
-% Copyright (c) 2016-2017 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
@@ -14,17 +14,20 @@ start_link() ->
     supervisor:start_link(?MODULE, []).
 
 init([]) ->
-    lorawan_utils:throw_info(server, started),
-    {ok, {{one_for_one, 10, 10}, [
+    lorawan_utils:throw_info({server, node()}, started, unique),
+    {ok, {{one_for_one, 2, 10}, [
         {db_guard,
             {lorawan_db_guard, start_link, []},
             permanent, 5000, worker, [lorawan_db_guard]},
         {gateways,
             {lorawan_gw_sup, start_link, []},
             permanent, infinity, supervisor, [lorawan_gw_sup]},
-        {connectors,
-            {lorawan_connector_sup, start_link, []},
-            permanent, infinity, supervisor, [lorawan_connector_sup]}
+        {http_registry,
+            {lorawan_http_registry, start_link, []},
+            permanent, 5000, worker, [lorawan_http_registry]},
+        {backends,
+            {lorawan_backend_sup, start_link, []},
+            permanent, infinity, supervisor, [lorawan_backend_sup]}
     ]}}.
 
 % end of file

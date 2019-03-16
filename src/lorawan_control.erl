@@ -1,11 +1,17 @@
 %
-% Copyright (c) 2016-2017 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
 -module(lorawan_control).
 
--export([stop/0]).
+-export([backup/1, restore/1, stop/0]).
+
+backup(Name) ->
+    invoke(mnesia, backup, [Name]).
+
+restore(Name) ->
+    invoke(mnesia, restore, [Name, [{default_op, recreate_tables}]]).
 
 stop() ->
     invoke(init, stop, []).
@@ -16,6 +22,7 @@ invoke(Module, Fun, Params) ->
     Node = list_to_atom(string:join(["lorawan", Host], "@")),
     case rpc:call(Node, Module, Fun, Params) of
         ok -> ok;
+        {atomic, _} -> ok;
         {badrpc, Reason} ->
             io:format("~w command failed: ~p~n", [Node, Reason])
     end.

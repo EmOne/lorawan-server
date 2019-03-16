@@ -1,8 +1,13 @@
-FROM erlang:19-slim
+FROM erlang:20-alpine
 MAINTAINER Petr Gotthard <petr.gotthard@centrum.cz>
 
-RUN apt-get update && apt-get install -y wget git npm && rm -r /var/cache/
-RUN git clone https://github.com/gotthardp/lorawan-server.git && cd lorawan-server && make release && make clean
+RUN apk add --no-cache --virtual build-deps git make wget nodejs-npm && \
+    git clone https://github.com/gotthardp/lorawan-server.git && \
+    cd lorawan-server && \
+    make release install && \
+    cd .. && \
+    rm -rf lorawan-server && \
+    apk del build-deps
 
 # volume for the mnesia database and logs
 RUN mkdir /storage
@@ -14,5 +19,5 @@ EXPOSE 1680/udp
 EXPOSE 8080/tcp
 
 ENV LORAWAN_HOME=/storage
-WORKDIR /lorawan-server/_build/default/rel/lorawan-server
+WORKDIR /usr/lib/lorawan-server
 CMD bin/lorawan-server

@@ -1,161 +1,188 @@
 %
-% Copyright (c) 2016-2017 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
 -module(lorawan_admin).
 
--export([handle_authorization/2]).
--export([check_health/1, check_health/3, parse/1, build/1]).
+-export([handle_authorization/2, handle_authorization_ex/2, fields_empty/1, auth_field/2]).
+-export([write/1, parse/1, build/1]).
 -export([parse_field/2, build_field/2]).
+-export([timestamp_to_json_date/1]).
 
--export([check_reception/1]).
--export([check_reset/1, check_battery/1, check_margin/1, check_adr/1]).
-
--include_lib("lorawan_server_api/include/lorawan_application.hrl").
 -include("lorawan.hrl").
+-include("lorawan_db.hrl").
 
-handle_authorization(Req, State) ->
+handle_authentication(Req) ->
     case cowboy_req:parse_header(<<"authorization">>, Req) of
-        {basic, User, Pass} ->
-            case authorized_password(<<"admin">>, User, Pass) of
-                true -> {true, Req, State};
-                false -> {{false, <<"Basic realm=\"lorawan-server\"">>}, Req, State}
+        {digest, Params} ->
+            Method = cowboy_req:method(Req),
+            UserName = proplists:get_value(<<"username">>, Params, <<>>),
+            Nonce = proplists:get_value(<<"nonce">>, Params, <<>>),
+            URI = proplists:get_value(<<"uri">>, Params, <<>>),
+            Response = proplists:get_value(<<"response">>, Params, <<>>),
+            % retrieve and check password
+            case mnesia:dirty_read(user, UserName) of
+                [#user{pass_ha1=HA1, scopes=AuthScopes}] ->
+                    case lorawan_http_digest:response(Method, URI, <<>>, HA1, Nonce) of
+                        Response ->
+                            {true, AuthScopes};
+                        _Else ->
+                            {false, digest_header()}
+                    end;
+                [] ->
+                    {false, digest_header()}
             end;
-        _ ->
-            {{false, <<"Basic realm=\"lorawan-server\"">>}, Req, State}
-    end.
-
-authorized_password(Role, User, Pass) ->
-    case mnesia:dirty_read(users, User) of
-        % temporary provisions for backward compatibility
-        [#user{pass=Pass, roles=undefined}] ->
-            true;
-        [#user{pass=Pass, roles=Roles}] ->
-            lists:member(Role, Roles);
         _Else ->
-            false
+            {false, digest_header()}
     end.
 
-check_health(#gateway{} = Gateway) ->
-    check_health(Gateway, ?MODULE, [check_reception]);
-check_health(#link{} = Link) ->
-    check_health(Link, ?MODULE, [check_reset, check_battery, check_margin, check_adr]);
-check_health(_Other) ->
-    undefined.
+handle_authorization(Req, {Read, Write}) ->
+    case handle_authentication(Req) of
+        {true, AuthScopes} ->
+            case lists:member(cowboy_req:method(Req), [<<"OPTIONS">>, <<"GET">>]) of
+                true ->
+                    {true, authorized_fields(AuthScopes, Read++Write)};
+                false ->
+                    {true, authorized_fields(AuthScopes, Write)}
+            end;
+        {false, Header} ->
+            {false, Header}
+    end;
+handle_authorization(Req, Read) ->
+    handle_authorization(Req, {Read, []}).
 
-check_health(Rec, Module, Funs) ->
+handle_authorization_ex(Req, {Read, Write}) ->
+    case handle_authentication(Req) of
+        {true, AuthScopes} ->
+            {true, authorized_fields(AuthScopes, Read++Write), authorized_fields(AuthScopes, Write)};
+        {false, Header} ->
+            {false, Header}
+    end;
+handle_authorization_ex(Req, Read) ->
+    handle_authorization_ex(Req, {Read, []}).
+
+fields_empty('*') ->
+    false;
+fields_empty(List) when length(List) > 0 ->
+    false;
+fields_empty([]) ->
+    true.
+
+auth_field(_, '*') ->
+    true;
+auth_field(Field, AuthFields) ->
+    lists:member(Field, AuthFields).
+
+digest_header() ->
+    Nonce = lorawan_http_digest:nonce(16),
+    lorawan_http_digest:header(digest, [
+        {<<"realm">>, ?REALM}, {<<"nonce">>, Nonce}, {<<"domain">>, <<"/">>}]).
+
+authorized_fields(AuthScopes, ReqScopes) ->
+    merge_scopes(
+        authorized_scopes(AuthScopes, ReqScopes)).
+
+authorized_scopes(undefined, ReqScopes) ->
+    % temporary provisions for backward compatibility
+    ReqScopes;
+authorized_scopes(AuthScopes, ReqScopes) ->
+    case lists:member(<<"unlimited">>, AuthScopes) of
+        true ->
+            ReqScopes;
+        false ->
+            lists:filter(
+                fun
+                    ({'*', _}) -> true;
+                    ({Name, _}) -> lists:member(Name, AuthScopes)
+                end,
+                ReqScopes)
+    end.
+
+merge_scopes(Scopes) ->
     lists:foldl(
         fun
-            (_Fun, undefined) ->
-                undefined;
-            (Fun, {Decay, Alerts}) ->
-                case apply(Module, Fun, [Rec]) of
-                    {DecayInc, AlertInc} ->
-                        {Decay + DecayInc, [AlertInc | Alerts]};
-                    ok ->
-                        {Decay, Alerts};
-                    undefined ->
-                        undefined
-                end
+            (_, '*') -> '*';
+            ({_, '*'}, _) -> '*';
+            ({_, Fields}, Acc) -> Fields ++ Acc
         end,
-        {0, []}, Funs).
+        [], Scopes).
 
-check_reception(#gateway{last_rx=undefined}) ->
-    {100, disconnected};
-check_reception(#gateway{last_rx=LastRx}) ->
-    case calendar:datetime_to_gregorian_seconds(calendar:universal_time()) -
-            calendar:datetime_to_gregorian_seconds(LastRx) of
-        Silent when Silent > 20 ->
-            {Silent div 20, disconnected};
-        _Else ->
-            ok
-    end.
-
-check_reset(#link{last_reset=LastRes, reset_count=Count, last_rx=LastRx})
-        when LastRes /= undefined, is_number(Count), Count > 1, (LastRx == undefined orelse LastRes > LastRx) ->
-    {20*(Count-1), many_resets};
-check_reset(#link{}) ->
-    ok.
-
-check_battery(#link{devstat=[{_Time, Battery, _Margin, _MaxSNR}|_]}) ->
-    if
-        Battery == 0 ->
-            % connected to external power
-            ok;
-        Battery < 50 ->
-            % TODO: should estimate trend instead
-            {100-2*Battery, battery_low};
-        Battery == 255 ->
-            {25, cannot_measure_battery};
-        true ->
-            ok
-    end;
-check_battery(#link{}) ->
-    undefined.
-
-check_margin(#link{devstat=[{_Time, _Battery, Margin, MaxSNR}|_]}) ->
-    if
-        Margin =< MaxSNR+10 ->
-            {5*(Margin-MaxSNR), downlink_noise};
-        true ->
-            ok
-    end;
-check_margin(#link{}) ->
-    undefined.
-
-check_adr(#link{last_rx=undefined}) ->
-    % no frame arrived yet, so we don't know the #link.adr_flag_use
-    undefined;
-check_adr(#link{adr_flag_set=0}) ->
-    % disabled, so we don't care
-    undefined;
-check_adr(#link{adr_flag_use=1, adr_flag_set=Flag, adr_set={TxPower, DataRate, Chans}})
-        when Flag >= 1, is_integer(TxPower), is_integer(DataRate), is_list(Chans) ->
-    % everything is correctly configured
-    ok;
-check_adr(#link{adr_flag_use=0, adr_flag_set=Flag}) when Flag >= 1 ->
-    {25, adr_not_supported};
-check_adr(#link{adr_flag_use=1, adr_flag_set=Flag}) when Flag >= 1 ->
-    {25, adr_misconfigured}.
+write(Rec) ->
+    mnesia:write(lorawan_db_guard:update_health(Rec)).
 
 parse(Object) when is_map(Object) ->
-    maps:map(fun(Key, Value) -> parse_field(Key, Value) end,
+    maps:map(
+        fun
+            (eid, Value) -> parse_eid(Value, Object);
+            (Key, Value) -> parse_field(Key, Value)
+        end,
         Object).
 
 build(Object) when is_map(Object) ->
     maps:map(
-        fun(Key, Value) -> build_field(Key, Value) end,
+        fun
+            (_Key, Value) when is_map(Value) -> build(Value);
+            (eid, Value) -> build_eid(Value, Object);
+            (Key, Value) -> build_field(Key, Value)
+        end,
         maps:filter(
             fun
                 (_Key, undefined) -> false;
-                % hide very internal fields
-                (Key, _Value) when Key == srvtmst -> false;
                 (_, _) -> true
-            end, Object)).
+            end, Object));
+build(Object) when is_list(Object) ->
+    lists:map(
+        fun (Value) -> build(Value) end,
+        Object).
+
+parse_eid(Value, _) when Value == null; Value == undefined ->
+    undefined;
+parse_eid(Value, #{entity:=Entity}) when Entity == server; Entity == connector ->
+    Value;
+parse_eid(Value, _) ->
+    lorawan_utils:hex_to_binary(Value).
 
 parse_field(_Key, Value) when Value == null; Value == undefined ->
     undefined;
-parse_field(Key, Value) when Key == mac; Key == last_mac; Key == netid; Key == mask;
-                        Key == deveui; Key == appeui; Key == appkey; Key == link;
+parse_field(Key, Value) when Key == mac; Key == netid; Key == mask;
+                        Key == deveui; Key == appeui; Key == appkey; Key == node;
                         Key == devaddr; Key == nwkskey; Key == appskey;
                         Key == data; Key == frid; Key == evid; Key == eid ->
-    lorawan_mac:hex_to_binary(Value);
+    lorawan_utils:hex_to_binary(Value);
+parse_field(Key, Value) when Key == sname; Key == severity; Key == entity ->
+    binary_to_existing_atom(Value, latin1);
+parse_field(Key, Value) when Key == gateways ->
+    lists:map(
+        fun(#{mac:=MAC, rxq:=RxQ}) ->
+            {lorawan_utils:hex_to_binary(MAC), ?to_record(rxq, parse(RxQ))}
+        end, Value);
 parse_field(Key, Value) when Key == subid ->
     parse_bitstring(Value);
-parse_field(Key, Value) when Key == severity; Key == entity ->
-    binary_to_existing_atom(Value, latin1);
+parse_field(Key, Values) when Key == cflist ->
+    lists:map(
+        fun(#{freq:=Freq}=Map) ->
+            {Freq, parse_opt(min_datr, Map), parse_opt(max_datr, Map)}
+        end, Values);
 parse_field(Key, Value) when Key == gpspos ->
     parse_latlon(Value);
 parse_field(Key, Value) when Key == adr_use; Key == adr_set ->
     parse_adr(Value);
-parse_field(Key, Value) when Key == rxwin_use; Key == rxwin_set ->
+parse_field(Key, Value) when Key == init_chans ->
+    text_to_intervals(binary_to_list(Value));
+parse_field(Key, Value) when Key == rxwin_init; Key == rxwin_set; Key == rxwin_use ->
     parse_rxwin(Value);
-parse_field(Key, Value) when Key == rxq; Key == last_rxq ->
+parse_field(Key, Value) when Key == rxq ->
     ?to_record(rxq, parse(Value));
 parse_field(Key, Value) when Key == txdata ->
     ?to_record(txdata, parse(Value));
-parse_field(Key, Value) when Key == last_join; Key == first_reset; Key == last_reset;
+parse_field(Key, Value) when Key == last_joins ->
+    lists:map(
+        fun(#{time:=Time, dev_nonce:=DevNonce}) ->
+            {iso8601:parse(Time), lorawan_utils:hex_to_binary(DevNonce)}
+        end, Value);
+parse_field(Key, Value) when Key == first_reset; Key == last_reset;
+                        Key == last_alive; Key == last_report;
                         Key == datetime; Key == devstat_time;
                         Key == first_rx; Key == last_rx ->
     iso8601:parse(Value);
@@ -172,43 +199,79 @@ parse_field(Key, Value) when Key == dwell ->
         end, Value);
 parse_field(Key, Value) when Key == delays ->
     lists:map(
-        fun(#{date:=Date, srvdelay:=SDelay, nwkdelay:=NDelay}) ->
-            {iso8601:parse(Date), SDelay, NDelay}
+        fun(#{date:=Date, min:=Min, avg:=Avg, max:=Max}) ->
+            {iso8601:parse(Date), {Min, Avg, Max}}
+        end, Value);
+parse_field(Key, Value) when Key == router_perf ->
+    lists:map(
+        fun(#{date:=Date, request_cnt:=ReqCnt, error_cnt:=ErrCnt}) ->
+            {iso8601:parse(Date), {ReqCnt, ErrCnt}}
         end, Value);
 parse_field(Key, Value) when Key == last_qs ->
     lists:map(fun(Item) -> parse_qs(Item) end, Value);
 parse_field(Key, Value) when Key == average_qs ->
     parse_qs(Value);
-parse_field(Key, Value) when Key == build; Key == parse ->
+parse_field(Key, Value) when Key == parse_uplink; Key == parse_event; Key == build ->
     parse_fun(Value);
+parse_field(Key, #{ip:=IP, port:=Port, ver:=Ver}) when Key == ip_address ->
+    {ok, IP2} = inet_parse:address(binary_to_list(IP)),
+    {IP2, Port, Ver};
 parse_field(_Key, Value) ->
     Value.
 
+build_eid(undefined, _) ->
+    null;
+build_eid(Value, #{entity:=Entity}) when Entity == server; Entity == connector ->
+    Value;
+build_eid(Value, _) ->
+    lorawan_utils:binary_to_hex(Value).
+
 build_field(_Key, undefined) ->
     null;
-build_field(Key, Value) when Key == mac; Key == last_mac; Key == netid; Key == mask;
-                        Key == deveui; Key == appeui; Key == appkey; Key == link;
+build_field(Key, Value) when Key == mac; Key == netid; Key == mask;
+                        Key == deveui; Key == appeui; Key == appkey; Key == node;
                         Key == devaddr; Key == nwkskey; Key == appskey;
                         Key == data; Key == frid; Key == evid; Key == eid ->
-    lorawan_mac:binary_to_hex(Value);
+    lorawan_utils:binary_to_hex(Value);
+build_field(Key, Value) when Key == sname; Key == severity; Key == entity ->
+    atom_to_binary(Value, latin1);
+build_field(Key, Value) when Key == gateways ->
+    lists:map(
+        fun({MAC, RxQ}) ->
+            #{mac=>lorawan_utils:binary_to_hex(MAC), rxq=>build(?to_map(rxq, RxQ))}
+        end, Value);
 build_field(Key, Value) when Key == subid ->
     build_bitstring(Value);
-build_field(Key, Value) when Key == severity; Key == entity ->
-    atom_to_binary(Value, latin1);
+build_field(Key, Values) when Key == cflist ->
+    lists:map(
+        fun
+            ({Freq, MinDR, MaxDR}) ->
+                #{freq=>Freq, min_datr=>build_opt(MinDR), max_datr=>build_opt(MaxDR)};
+            % backwards compatibility
+            (Freq) ->
+                #{freq=>Freq}
+        end, Values);
 build_field(Key, Value) when Key == gpspos ->
     build_latlon(Value);
 build_field(Key, Value) when Key == adr_use; Key == adr_set ->
     build_adr(Value);
-build_field(Key, Value) when Key == rxwin_use; Key == rxwin_set ->
+build_field(Key, Value) when Key == init_chans ->
+    list_to_binary(intervals_to_text(Value));
+build_field(Key, Value) when Key == rxwin_init; Key == rxwin_set; Key == rxwin_use ->
     build_rxwin(Value);
-build_field(Key, Value) when Key == rxq; Key == last_rxq ->
+build_field(Key, Value) when Key == rxq ->
     build(?to_map(rxq, Value));
 build_field(Key, Value) when Key == txdata ->
     build(?to_map(txdata, Value));
 build_field(Key, immediately) when Key == time ->
     <<"immediately">>;
-build_field(Key, Value) when Key == last_join; Key == first_reset; Key == last_reset;
+build_field(Key, Value) when Key == last_joins ->
+    lists:map(fun({Time, DevNonce}) ->
+                #{time=>iso8601:format(Time), dev_nonce=>lorawan_utils:binary_to_hex(DevNonce)}
+              end, Value);
+build_field(Key, Value) when Key == first_reset; Key == last_reset;
                         Key == datetime; Key == devstat_time; Key == time;
+                        Key == last_alive; Key == last_report;
                         Key == first_rx; Key == last_rx ->
     iso8601:format(Value);
 build_field(Key, Value) when Key == devstat ->
@@ -218,17 +281,28 @@ build_field(Key, Value) when Key == dwell ->
                 #{time=>iso8601:format(Time), freq=>Freq, duration=>Duration, hoursum=>Sum}
               end, Value);
 build_field(Key, Value) when Key == delays ->
-    lists:map(fun({Date, SDelay, NDelay}) -> #{date=>iso8601:format(Date), srvdelay=>SDelay, nwkdelay=>NDelay};
-                ({Date, NDelay}) -> #{date=>iso8601:format(Date), srvdelay=>undefined, nwkdelay=>NDelay}
+    lists:map(fun({Date, {Min, Avg, Max}}) ->
+                  #{date=>iso8601:format(Date), min=>Min, avg=>Avg, max=>Max};
+                 % backward compatibility with 0.4.x
+                 ({Date, _SDelay, NDelay}) ->
+                  #{date=>iso8601:format(Date), min=>NDelay, avg=>NDelay, max=>NDelay}
+              end, Value);
+build_field(Key, Value) when Key == router_perf ->
+    lists:map(fun({Date, {ReqCnt, ErrCnt}}) ->
+                  #{date=>iso8601:format(Date), request_cnt=>ReqCnt, error_cnt=>ErrCnt}
               end, Value);
 build_field(Key, Value) when Key == last_qs ->
     lists:map(fun(Item) -> build_qs(Item) end, Value);
 build_field(Key, Value) when Key == average_qs ->
     build_qs(Value);
-build_field(Key, Value) when Key == build; Key == parse ->
+build_field(Key, Value) when Key == parse_uplink; Key == parse_event; Key == build ->
     build_fun(Value);
-build_field(Key, Value) when Key == gateway ->
-    build(Value);
+build_field(Key, Value) when Key == all_gw ->
+    lists:map(
+        fun(Gw) -> build(Gw) end,
+        Value);
+build_field(Key, {IP, Port, Ver}) when Key == ip_address ->
+    #{ip=>list_to_binary(inet_parse:ntoa(IP)), port=>Port, ver=>Ver};
 build_field(_Key, Value) ->
     Value.
 
@@ -242,7 +316,7 @@ parse_bitstring(Map) ->
                     <<0:Len>>
             end;
         Val ->
-            BinVal = lorawan_mac:hex_to_binary(Val),
+            BinVal = lorawan_utils:hex_to_binary(Val),
             case parse_opt(len, Map) of
                 undefined ->
                     BinVal;
@@ -256,9 +330,9 @@ parse_bitstring(Map) ->
 
 build_bitstring(Value) ->
     case bit_size(Value) rem 8 of
-        0 -> #{val => lorawan_mac:binary_to_hex(Value),
+        0 -> #{val => lorawan_utils:binary_to_hex(Value),
                 len => bit_size(Value)};
-        N -> #{val => lorawan_mac:binary_to_hex(<<Value/bitstring, 0:(8-N)>>),
+        N -> #{val => lorawan_utils:binary_to_hex(<<Value/bitstring, 0:(8-N)>>),
                 len => bit_size(Value)}
     end.
 
@@ -280,7 +354,9 @@ build_adr({TXPower, DataRate, Chans}) ->
         case Chans of
             undefined -> null;
             Val -> list_to_binary(intervals_to_text(Val))
-        end}.
+        end};
+build_adr(_Else) ->
+    #{}.
 
 parse_rxwin(List) ->
     {parse_opt(rx1_dr_offset, List),
@@ -288,7 +364,9 @@ parse_rxwin(List) ->
 
 build_rxwin({RX1DROffset, RX2DataRate, Frequency}) ->
     #{rx1_dr_offset => build_opt(RX1DROffset),
-        rx2_dr => build_opt(RX2DataRate), rx2_freq => build_opt(Frequency)}.
+        rx2_dr => build_opt(RX2DataRate), rx2_freq => build_opt(Frequency)};
+build_rxwin(_Else) ->
+    #{}.
 
 parse_devstat(Value) ->
     lists:map(
@@ -359,6 +437,15 @@ text_to_intervals(Text) ->
                 [B, C] -> {list_to_integer(B), list_to_integer(C)}
             end
         end, string:tokens(Text, ";, ")).
+
+timestamp_to_json_date({{Yr,Mh,Dy},{Hr,Me,Sc}}) ->
+    list_to_binary(
+        lists:concat(["Date(",
+            % javascript counts months 0-11
+            integer_to_list(Yr), ",", integer_to_list(Mh-1), ",", integer_to_list(Dy), ",",
+            integer_to_list(Hr), ",", integer_to_list(Me), ",", integer_to_list(trunc(Sc)), ")"]));
+timestamp_to_json_date(_Else) ->
+    null.
 
 -include_lib("eunit/include/eunit.hrl").
 

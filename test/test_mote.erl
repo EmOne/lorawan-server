@@ -1,16 +1,17 @@
 %
-% Copyright (c) 2016-2017 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
 -module(test_mote).
 -behaviour(gen_server).
 
--export([start_link/2, stop/1, push_and_pull/4, semtech_payload/1]).
+-export([start_link/2, stop/1, push_and_pull/5, semtech_payload/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -record(state, {devaddr, nwkskey, appskey, gateway, client, send_status}).
--import(lorawan_mac, [reverse/1, cipher/5, b0/4]).
+-import(lorawan_mac, [cipher/5, b0/4]).
+-import(lorawan_utils, [reverse/1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -20,8 +21,8 @@ start_link(DevCfg, Gateway) ->
 stop(Mote) ->
     gen_server:stop(Mote).
 
-push_and_pull(Mote, FCnt, FPort, FData) ->
-    Mote ! {self(), FCnt, FPort, FData},
+push_and_pull(Mote, Conf, FCnt, FPort, FData) ->
+    Mote ! {self(), Conf, FCnt, FPort, FData},
     receive
         Response -> Response
         after 2000 -> {error, timeout}
@@ -33,7 +34,7 @@ init([DevCfg, Gateway]) ->
         client=undefined, send_status=false}}.
 
 get_config({DevAddr, NwkSKey, AppSKey}) ->
-    {DevAddr, lorawan_mac:hex_to_binary(NwkSKey), lorawan_mac:hex_to_binary(AppSKey)}.
+    {DevAddr, lorawan_utils:hex_to_binary(NwkSKey), lorawan_utils:hex_to_binary(AppSKey)}.
 
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
@@ -41,8 +42,13 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Request, State) ->
     {noreply, State}.
 
-handle_info({From, FCnt, FPort, FData}, #state{gateway=Gateway}=State) ->
-    Req = encode_frame(2#010, FCnt, 0, 0, 0, <<>>, FPort, FData, State),
+handle_info({From, Conf, FCnt, FPort, FData}, #state{gateway=Gateway}=State) ->
+    MType =
+        case Conf of
+            false -> 2#010;
+            true -> 2#100
+        end,
+    Req = encode_frame(MType, FCnt, 0, 0, 0, <<>>, FPort, FData, State),
     Gateway ! {uplink, self(), test_forwarder:rxpk(base64:encode(Req))},
     {noreply, State#state{client=From}};
 
@@ -99,7 +105,7 @@ process_frame0(MType, Msg, MIC, #state{devaddr=DevAddr, nwkskey=NwkSKey, appskey
             case FPort of
                 0 when FOptsLen == 0 ->
                     Data = cipher(FRMPayload, NwkSKey, MType band 1, DevAddr, FCnt),
-                    {{ok, FPort, reverse(Data)}, State};
+                    {{ok, bit_to_bool(ACK), FPort, reverse(Data)}, State};
                 0 ->
                     {{error, double_fopts}, State};
                 _N ->
@@ -109,11 +115,14 @@ process_frame0(MType, Msg, MIC, #state{devaddr=DevAddr, nwkskey=NwkSKey, appskey
                             end,
                             State, parse_fopts(FOpts)),
                     Data = cipher(FRMPayload, AppSKey, MType band 1, DevAddr, FCnt),
-                    {{ok, FPort, reverse(Data)}, State2}
+                    {{ok, bit_to_bool(ACK), FPort, reverse(Data)}, State2}
             end;
         _MIC2 ->
             {{error, bad_mic}, State}
     end.
+
+bit_to_bool(0) -> false;
+bit_to_bool(1) -> true.
 
 parse_fopts(<<16#02, Margin, GwCnt, Rest/binary>>) ->
     [{link_check_ans, Margin, GwCnt} | parse_fopts(Rest)];
