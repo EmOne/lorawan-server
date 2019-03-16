@@ -5,7 +5,7 @@
 <p>
 The server:
 <ul>
- <li>Implements the LoRaWAN Specification v1.0.2</li>
+ <li>Implements the LoRaWAN Specification v1.0.3</li>
  <li>Communicates (any number of) with remote LoRaWAN gateways.</li>
  <li>Performs all required encryption and integrity checks.
     <ul>
@@ -16,8 +16,10 @@ The server:
  <li>Automatically parses well-known payload formats. It currently supports:
     <ul>
     <li>Cayenne Low Power Payload</li>
+    <li>Concise Binary Object Representation (CBOR)</li>
     </ul>
  </li>
+ <li>Stores uplink data directly to a MongoDB collection.</li>
  <li>Invokes external applications. It currently supports connections via:
     <ul>
     <li>WebSocket protocol</li>
@@ -31,16 +33,18 @@ The server:
     <li>Supports both the activation by personalization and the over-the-air activation.</li>
     <li>Supports both unconfirmed and confirmed data uplink and downlink.</li>
     <li>Supports multicast to user-defined groups.</li>
-    <li>Supports all regions standartized in LoRaWAN 1.0.2 Regional Parameters for Europe, US, China, Australia, Asia, South Korea and India.</li>
+    <li>Supports all regions standartized in LoRaWAN 1.0.3 Regional Parameters for Europe, US, China, Australia, Asia, South Korea, India and Russia.</li>
     </ul>
  </li>
  <li>Provides a network management interface.
     <ul>
-    <li>Monitors the server, gateways and node health status and displays device battery and connection quality indicators.</li>
     <li>Supports both manual and automatic configuration of TX power and data rate (ADR).</li>
+    <li>Monitors the server, gateways and node health status and displays device battery and connection quality indicators.</li>
+    <li>Sends health alerts via e-mail or Slack.</li>
     </ul>
  </li>
  <li>Runs on all major operating systems, including Windows, Linux, OS X and Solaris, even on embedded systems like Raspbian, mLinux and other Yocto/OpenEmbedded systems, OpenWrt or in a Docker container.</li>
+ <li>Can establish Clusters for high availability.</li>
  <li>Does not crash as it's implemented in Erlang, which is designed for building fault-tolerant systems.</li>
  <li>Is free, distributed under the MIT license.</li>
 </ul>
