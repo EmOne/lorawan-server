@@ -1,5 +1,5 @@
 %
-% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
@@ -79,12 +79,17 @@ notify(Scope) ->
     end.
 
 encoded_records(State) ->
-    jsx:encode(matched_records(State)).
+    {atomic, Records} =
+        mnesia:transaction(
+            fun() ->
+                matched_records(State)
+            end),
+    jsx:encode(Records).
 
 matched_records(#state{table=Table, match=Match}=State) ->
     lists:map(
         fun(Rec)-> build_record(Rec, State) end,
-        mnesia:dirty_select(Table, [{Match, [], ['$_']}])).
+        mnesia:select(Table, [{Match, [], ['$_']}])).
 
 build_record(Rec, #state{fields=Fields, module=Module, auth_fields=AuthFields}) ->
     apply(Module, build, [

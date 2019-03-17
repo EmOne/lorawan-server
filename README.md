@@ -193,7 +193,7 @@ Please let me know if you use the lorawan-server and want to be listed here.
 The lorawan-server is distributed under the terms of the MIT License.
 See the [LICENSE](LICENSE).
 
-Copyright (c) 2016-2018 Petr Gotthard
+Copyright (c) 2016-2019 Petr Gotthard
 
 ### Sponsors
 
@@ -201,12 +201,6 @@ Copyright (c) 2016-2018 Petr Gotthard
 [KMLE](http://research.konicaminolta.eu) is working on the challenge of
 helping customers optimize the way they work by digitizing the workplace
 and their workflows.
-
-<br/>
-
-<a href="http://www.iotini.com"><img align="left" src="http://www.iotini.com/images/logo.png"></a>
-[I2OT](http://www.iotini.com/#product) is the first industrial wireless sensor
-system that provides a total solution for industrial sensing needs.
 
 <br/>
 

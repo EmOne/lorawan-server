@@ -1,5 +1,5 @@
 %
-% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
@@ -78,7 +78,7 @@ validate(Req) ->
 validate0([{Key, Value} | Other]) ->
     case validate_key(Key, Value) of
         ok ->
-            validate(Other);
+            validate0(Other);
         Else ->
             Else
     end;

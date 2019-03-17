@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+ * Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
  * All rights reserved.
  * Distributed under the terms of the MIT License. See the LICENSE file.
  */
@@ -201,7 +201,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .targetField(nga.field('name'))
             .validation({ required: true }),
         nga.field('email').label('E-Mail')
-            .validation({ pattern: '[^@\s]+@[^@\s]+\.[^@\s]+' }),
+            .validation({ pattern: '[^@\\s]+@[^@\\s]+\\.[^@\\s]+' }),
         nga.field('send_alerts', 'boolean')
             .validation({ required: true })
             .defaultValue(true)
@@ -1018,9 +1018,11 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .choices([
                 { value: 'netid', label: 'netid' },
                 { value: 'app', label: 'app' },
+                { value: 'appid', label: 'appid' },
                 { value: 'devaddr', label: 'devaddr' },
                 { value: 'deveui', label: 'deveui' },
                 { value: 'appargs', label: 'appargs' },
+                { value: 'desc', label: 'desc' },
                 { value: 'battery', label: 'battery' },
                 { value: 'fcnt', label: 'fcnt' },
                 { value: 'port', label: 'port' },
@@ -1034,7 +1036,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 { value: 'mac', label: 'mac' },
                 { value: 'lsnr', label: 'lsnr' },
                 { value: 'rssi', label: 'rssi' },
-                { value: 'all_gw', label: 'all_gw' }
+                { value: 'all_gw', label: 'all_gw' },
+                { value: 'gpsalt', label: 'gpsalt' },
+                { value: 'gpspos', label: 'gpspos' }
             ]),
         nga.field('payload', 'choice')
             .choices([
@@ -1047,6 +1051,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('event_fields', 'choices')
             .choices([
                 { value: 'app', label: 'app' },
+                { value: 'appid', label: 'appid' },
                 { value: 'event', label: 'event' },
                 { value: 'devaddr', label: 'devaddr' },
                 { value: 'deveui', label: 'deveui' },
@@ -1277,9 +1282,20 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
 }]);
 
 function map_memstats(value, entry) {
+    var free = 0;
+
     if ('memory.free_memory' in entry) {
-        var free = 100 * entry['memory.free_memory'] / entry['memory.total_memory'];
-        return bytesToSize(entry['memory.free_memory']) + " (" + free.toFixed(0) + "%)";
+        free += entry['memory.free_memory'];
+    }
+    if ('memory.buffered_memory' in entry) {
+        free += entry['memory.buffered_memory'];
+    }
+    if ('memory.cached_memory' in entry) {
+        free += entry['memory.cached_memory'];
+    }
+    if ('memory.total_memory' in entry) {
+        var free_percentage = 100 * free / entry['memory.total_memory'];
+        return bytesToSize(free) + " (" + free_percentage.toFixed(0) + "%)";
     }
 }
 
@@ -1628,7 +1644,7 @@ return {
             end: new Date(),
             rollingMode: {follow: true, offset: 0.95},
             selectable: false,
-            maxHeight: "300px",
+            height: "300px",
             zoomMax: 2592000000,
             zoomMin: 1000
         };

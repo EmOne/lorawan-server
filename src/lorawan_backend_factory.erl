@@ -1,5 +1,5 @@
 %
-% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
@@ -140,9 +140,11 @@ find_module0(Scheme, []) ->
     {error, {unknown_scheme, Scheme}}.
 
 
+-spec uplink(binary(), {#profile{}, #node{}} | {#profile{}, #device{}, binary()}, map()) -> ok.
 uplink(App, Node, Vars) ->
     send_to_connectors(App, {uplink, Node, Vars}).
 
+-spec event(binary(), {#profile{}, #node{}} | {#profile{}, #device{}, binary()}, map()) -> ok.
 event(App, Node, Vars) ->
     send_to_connectors(App, {event, Node, Vars}).
 
@@ -159,9 +161,12 @@ announce_backend_update(App) ->
 
 nodes_with_backend(App) ->
     lists:foldl(
-        fun(#profile{name=ProfId}, Acc) ->
-            Nodes = mnesia:dirty_index_read(node, ProfId, #node.profile),
-            Acc ++ Nodes
+        fun(#profile{name=ProfId}=Profile, Acc) ->
+            lists:foldl(
+                fun(Node, Acc2) ->
+                    [{Profile, Node} | Acc2]
+                end,
+                Acc, mnesia:dirty_index_read(node, ProfId, #node.profile))
         end,
         [], mnesia:dirty_index_read(profile, App, #profile.app)).
 

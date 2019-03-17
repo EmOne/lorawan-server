@@ -109,8 +109,9 @@ The device sent an unexpected frame counter *FCnt*. This may be because:
 If this is an exceptional case, go to the *Nodes* list and manually update the
 *FCnt Up* to the *FCnt* number.
 
-To allow ABP devices to freely reset set the *FCnt Check* to *Reset on zero*,
-but please note this weakens LoRaWAN security a bit.
+To allow ABP devices to freely reset set the *FCnt Check* to *Reset on zero*
+in the device profile, but please note this weakens LoRaWAN security a bit.
+
 It is recommended to use over-the-air-activation (OTAA) instead.
 
 ### repeated_reset
@@ -129,6 +130,15 @@ sent some other data. It may be because:
    [Handler](Handlers.md) and use its name in the Device *Profile*.
  * You have some other Mote device. Make sure your firmware uses the
    [supported format](https://github.com/Lora-net/LoRaMac-node/blob/master/src/apps/LoRaMac/classA/LoRaMote/main.c#L207).
+
+### ack_lost
+
+Warning reported by the gateway: it did not receive
+[PUSH_ACK](https://github.com/Lora-net/packet_forwarder/blob/master/PROTOCOL.TXT#L86)
+on time. In the
+[packet_forwarder config](https://github.com/Lora-net/packet_forwarder/blob/master/lora_pkt_fwd/global_conf.json#L221)
+there is a push_timeout_ms set by default to 100ms. Try increasing this value to
+e.g. 500ms.
 
 ### downlink_missed
 

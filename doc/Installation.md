@@ -155,12 +155,13 @@ Make sure you have the run-time prerequisites:
 
 ```bash
 sudo apt-get update
+sudo apt-get install policykit-1 make wget curl
 sudo apt-get install erlang-base erlang-crypto erlang-syntax-tools erlang-inets \
     erlang-mnesia erlang-runtime-tools erlang-ssl erlang-public-key erlang-asn1 \
     erlang-os-mon erlang-snmp erlang-xmerl
 ```
 
-Required `nodejs` can be installed from [here](https://github.com/nodesource/distributions).
+Required `npm` can be installed from [here](https://github.com/nodesource/distributions).
 On Debian, add the following to your `/etc/apt/sources.list` and run `apt-get update`
 before installation:
 ```
@@ -170,7 +171,8 @@ deb-src http://deb.nodesource.com/node_6.x stretch main
 
 Then, obtain the build prerequisites:
 ```bash
-sudo apt-get install git erlang-dev erlang-parsetools erlang-src erlang-eunit nodejs
+sudo apt-get install git erlang-dev erlang-parsetools erlang-src erlang-eunit \
+     nodejs rsync
 ```
 
 Get the latest lorawan-server sources by:
