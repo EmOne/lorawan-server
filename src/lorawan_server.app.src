@@ -5,7 +5,7 @@
 %
 {application, lorawan_server,
     [{description, "LoRaWAN Application Server"},
-    {vsn, "0.6.7"},
+    {vsn, "0.7.0"},
     {modules, []},
     {registered, []},
     {mod, {lorawan_app, []}},
@@ -28,6 +28,7 @@
         {http_extra_headers, #{}},
         % use to limit SSL versions and ciphers, see http://erlang.org/doc/man/ssl.html
         {ssl_options, []},
+        {map_tile_server, <<"http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png">>},
         {frames_before_adr, 50},
         {retained_rxframes, 50},
         {websocket_timeout, 3600000}, % ms
@@ -40,9 +41,10 @@
         {deduplication_delay, 200},
         {server_stats_interval, 60}, % [s]
         {slack_server, {"slack.com", 443}},
+        {trim_interval, 3600}, % [s]
         {event_lifetime, 86400}
     ]},
-    {applications, [kernel, stdlib, sasl, os_mon, lager, mnesia, eid,
+    {applications, [kernel, stdlib, sasl, os_mon, lager, mnesia, eid, cbor,
         cowboy, gun, jsx, iso8601, gen_smtp, amqp_client, emqttc, erlmongo]}]}.
 
 % end of file
