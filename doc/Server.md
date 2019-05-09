@@ -48,11 +48,12 @@ The Status tab displays:
 ## Configuration
 
 This is a server-server configuration. You can set the following parameters:
- - **Admin URL** included in E-Mail messages
+ - **Admin URL** with `http://` or `https://` and server IP:port. This shall be
+   the base address, after which `/admin` (or whatever defined by
+   `http_admin_path`) can be appended to access the web-admin, or `/api` can be
+   appended to access the REST API.
  - **Items Per Page** defines maximal length of each web-admin list. Clear this
    value to enable infinite paging.
- - **Google API Key**, which has Google Maps enabled. You can
-   [get your API Key](https://developers.google.com/maps/documentation/javascript/get-api-key) from Google.
  - **Slack Token** that identifies the Slack group
 
 In the E-Mail you can set:
