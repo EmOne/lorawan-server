@@ -1,5 +1,5 @@
 %
-% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
@@ -12,9 +12,9 @@
 
 -include("lorawan_db.hrl").
 
-node_to_vars(#node{devaddr=DevAddr, appargs=AppArgs}) ->
+node_to_vars({_Profile, #node{devaddr=DevAddr, appargs=AppArgs}}) ->
     #{devaddr=>DevAddr, appargs=>AppArgs};
-node_to_vars({#device{appargs=AppArgs}, DevAddr}) ->
+node_to_vars({_Profile, #device{appargs=AppArgs}, DevAddr}) ->
     #{devaddr=>DevAddr, appargs=>AppArgs}.
 
 pid_to_binary(Pid) ->
@@ -38,13 +38,13 @@ pattern_for_cowboy(<<"/", _/binary>>=URI) ->
 pattern_for_cowboy(_Error) ->
     error.
 
--type fill_pattern_t() :: 'undefined' | {binary(), [{integer(), integer()}]}.
+-type fill_pattern_t() :: {binary(), [{integer(), integer()}]}.
 -spec prepare_filling('undefined' | binary() | [binary()]) -> fill_pattern_t() | [fill_pattern_t()].
 prepare_filling(List) when is_list(List) ->
     lists:map(
         fun(Item) -> prepare_filling(Item) end, List);
 prepare_filling(undefined) ->
-    undefined;
+    ?EMPTY_PATTERN;
 prepare_filling(Pattern) ->
     case re:run(Pattern, "{[^}]+}", [global]) of
         {match, Match} ->
@@ -60,7 +60,7 @@ fill_pattern(List, Values) when is_list(List) ->
     lists:map(
         fun(Item) -> fill_pattern(Item, Values) end, List);
 fill_pattern(undefined, _) ->
-    undefined;
+    <<>>;
 fill_pattern({Pattern, []}, _) ->
     Pattern;
 fill_pattern({Pattern, Vars}, Values) ->
@@ -92,9 +92,10 @@ get_value(_Var, _Else) ->
     undefined.
 
 prepare_matching(undefined) ->
-    undefined;
+    ?EMPTY_PATTERN;
 prepare_matching(Pattern) ->
-    EPattern0 = binary:replace(Pattern, <<".">>, <<"\\">>, [global, {insert_replaced, 1}]),
+    EPattern0 = binary:replace(Pattern, [<<".">>, <<"$">>, <<"+">>, <<"*">>],
+        <<"\\">>, [global, {insert_replaced, 1}]),
     EPattern = binary:replace(EPattern0, <<"#">>, <<".*">>, [global]),
     case re:run(EPattern, "{[^}]+}", [global]) of
         {match, Match} ->
@@ -106,12 +107,17 @@ prepare_matching(Pattern) ->
             {ok, MP} = re:compile(<<"^", Regex/binary, "$">>),
             {MP, [binary_to_existing_atom(binary:part(EPattern, Start+1, Len-2), latin1) || [{Start, Len}] <- Match]};
         nomatch ->
-            {Pattern, []}
+            {ok, MP} = re:compile(<<"^", EPattern/binary, "$">>),
+            {MP, []}
     end.
 
+match_pattern(<<>>, {<<>>, _}) ->
+    #{};
+match_pattern(_NonEmpty, {<<>>, _}) ->
+    undefined;
 match_pattern(Topic, {Pattern, Vars}) ->
-    case re:run(Topic, Pattern, [global, {capture, all, binary}]) of
-        {match, [[_Head | Matches]]} ->
+    case re:run(Topic, Pattern, [global, {capture, all_but_first, binary}]) of
+        {match, [Matches]} ->
             maps:from_list(lists:zip(Vars, Matches));
         nomatch ->
             undefined
@@ -120,7 +126,7 @@ match_pattern(Topic, {Pattern, Vars}) ->
 match_vars(Topic, Pattern) ->
     case match_pattern(Topic, Pattern) of
         undefined ->
-            lager:error("Topic ~w does not match pattern ~w", [Topic, Pattern]),
+            lager:error("Topic ~p does not match given pattern", [Topic]),
             #{};
         Vars ->
             lorawan_admin:parse(Vars)
@@ -187,11 +193,24 @@ value_to_binary(Term) when is_list(Term) -> list_to_binary(Term);
 value_to_binary(Term) when is_binary(Term) -> Term;
 value_to_binary(Term) -> list_to_binary(io_lib:print(Term)).
 
+-spec decode_and_downlink(#connector{}, binary(), map()) -> 'ok' | {'error', any()}.
 decode_and_downlink(#connector{app=App, format=Format}, Msg, Bindings) ->
     case decode(Format, Msg) of
-        {ok, Vars} ->
+        {ok, Vars} when is_map(Vars) ->
             lorawan_application_backend:handle_downlink(App,
                 maps:merge(Bindings, Vars));
+        {ok, Vars} when is_list(Vars) ->
+            lorawan_application_backend:handle_downlink(App,
+                lists:map(
+                    fun (Var) when is_map(Var) ->
+                            maps:merge(Bindings, Var);
+                        (Var) ->
+                            Var
+                    end,
+                    Vars));
+        {ok, Vars} ->
+            lorawan_application_backend:handle_downlink(App,
+                Vars);
         Error ->
             Error
     end.
@@ -200,10 +219,11 @@ decode(<<"raw">>, Msg) ->
     {ok, #{data => Msg}};
 decode(<<"json">>, Msg) ->
     case catch lorawan_admin:parse(jsx:decode(Msg, [return_maps, {labels, atom}])) of
-        Struct when is_map(Struct) ->
-            {ok, Struct};
-        _Else ->
-            {error, json_syntax_error}
+        {'EXIT', Error} ->
+            lager:error("JSON error: ~p", [Error]),
+            {error, json_syntax_error};
+        Struct ->
+            {ok, Struct}
     end.
 
 raise_failed(ConnId, {Error, Args}) ->
@@ -237,6 +257,8 @@ matchtst(Vars, Pattern, Topic) ->
 
 pattern_test_()-> [
     matchtst(#{}, <<"normal/uri">>, <<"normal/uri">>),
+    matchtst(#{}, <<>>, <<>>),
+    matchtst(undefined, <<>>, <<"any/uri">>),
     matchtst(undefined, <<"normal/uri">>, <<"another/uri">>),
     matchtst(#{devaddr => <<"00112233">>}, <<"{devaddr}">>, <<"00112233">>),
     matchtst(#{devaddr => <<"00112233">>}, <<"prefix.{devaddr}">>, <<"prefix.00112233">>),
@@ -250,6 +272,12 @@ pattern_test_()-> [
         match_pattern(<<"00112233/trailing/data">>, prepare_matching(<<"{devaddr}/#">>))),
     ?_assertEqual(#{devaddr => <<"00112233">>},
         match_pattern(<<"/leading/data/00112233">>, prepare_matching(<<"#/{devaddr}">>))),
+    ?_assertEqual(#{}, match_pattern(<<"">>, prepare_matching(<<"#">>))),
+    ?_assertEqual(#{}, match_pattern(<<"any">>, prepare_matching(<<"#">>))),
+    ?_assertEqual(#{}, match_pattern(<<"/any">>, prepare_matching(<<"/#">>))),
+    ?_assertEqual(#{}, match_pattern(<<"any/">>, prepare_matching(<<"#/">>))),
+    ?_assertEqual(#{}, match_pattern(<<"$.+*">>, prepare_matching(<<"$.+*">>))),
+    ?_assertEqual(#{}, match_pattern(<<"$.+*">>, prepare_matching(<<"#">>))),
     ?_assertEqual(<<"/without/template">>, pattern_for_cowboy(<<"/without/template">>)),
     ?_assertEqual(<<"/some/:template">>, pattern_for_cowboy(<<"/some/{template}">>))].
 

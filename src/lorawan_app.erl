@@ -1,5 +1,5 @@
 %
-% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
@@ -14,6 +14,7 @@ start() ->
 
 start(_Type, _Args) ->
     ok = ensure_erlang_version(19),
+    lager:debug("Using config: ~p", [application:get_all_env(lorawan_server)]),
     lorawan_db:ensure_tables(),
     case {application:get_env(lorawan_server, http_admin_listen, []), retrieve_valid_ssl()} of
         {[], []} ->
@@ -75,7 +76,7 @@ ensure_erlang_version(Min) ->
 
 normal_dispatch() ->
     cowboy_router:compile([
-        {'_', lorawan_http_registry:get_static(routes)}
+        {'_', lorawan_http_registry:get_static(routes)++lorawan_http_registry:get_custom(routes)}
     ]).
 
 redirect_dispatch() ->

@@ -1,5 +1,5 @@
 %
-% Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+% Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
 %
@@ -42,6 +42,7 @@ init([#connector{connid=Id, app=App, uri=Uri, client_id=ClientId, name=UserName,
         }}
     catch
         _:Error ->
+            lager:debug("connector ~s failed: ~p~n~p", [Id, Error, erlang:get_stacktrace()]),
             lorawan_connector:raise_failed(Id, Error),
             {stop, shutdown}
     end.
@@ -305,11 +306,25 @@ publish_uplinks(C, PatPub, Format, QoS, Vars0) when is_list(Vars0) ->
 publish_uplinks(C, PatPub, Format, QoS, Vars0) when is_map(Vars0) ->
     publish_uplink(C, PatPub, Format, QoS, Vars0).
 
-publish_uplink(C, PatPub, Format, QoS, Vars0) ->
-    emqttc:publish(C,
-        lorawan_connector:fill_pattern(PatPub, lorawan_admin:build(Vars0)),
+publish_uplink(C, PatPub, Format, QoS, Vars) ->
+    Topic = lorawan_connector:fill_pattern(PatPub, lorawan_admin:build(Vars)),
+    QoS0 = default(QoS, 0),
+    case maps:get(retain, Vars, false) of
+        delete ->
+            % Delete retained message by sending
+            % an empty message with retain = true.
+            emqttc:publish(C, Topic, <<>>,
+                [{qos, QoS0}, {retain, true}]),
+            Retain = false;
+        true ->
+            Retain = true;
+        _Else ->
+            Retain = false
+    end,
+    Vars0 = maps:without([retain], Vars),
+    emqttc:publish(C, Topic,
         encode_uplink(Format, Vars0),
-        default(QoS, 0)).
+        [{qos, QoS0}, {retain, Retain}]).
 
 publish_event(C, PatPub, QoS, Vars0) ->
     Vars = lorawan_admin:build(Vars0),

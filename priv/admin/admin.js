@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2018 Petr Gotthard <petr.gotthard@centrum.cz>
+ * Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
  * All rights reserved.
  * Distributed under the terms of the MIT License. See the LICENSE file.
  */
@@ -870,14 +870,14 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
             .template(function(entry) {
                 return format_mac_array(entry.values.mac);
             }),
-        nga.field('rssi', 'number').label('U/L RSSI')
+        nga.field('rssi').label('U/L RSSI')
             .map(function(value, entry) {
                 return array_slice_rxq(entry.gateways, 'rssi');
             })
             .template(function(entry) {
                 return entry.values.rssi.join('<br>');
             }),
-        nga.field('lsnr', 'number').label('U/L SNR')
+        nga.field('lsnr').label('U/L SNR')
             .map(function(value, entry) {
                 return array_slice_rxq(entry.gateways, 'lsnr');
             })
@@ -1022,6 +1022,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 { value: 'devaddr', label: 'devaddr' },
                 { value: 'deveui', label: 'deveui' },
                 { value: 'appargs', label: 'appargs' },
+                { value: 'desc', label: 'desc' },
                 { value: 'battery', label: 'battery' },
                 { value: 'fcnt', label: 'fcnt' },
                 { value: 'port', label: 'port' },
@@ -1035,7 +1036,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                 { value: 'mac', label: 'mac' },
                 { value: 'lsnr', label: 'lsnr' },
                 { value: 'rssi', label: 'rssi' },
-                { value: 'all_gw', label: 'all_gw' }
+                { value: 'all_gw', label: 'all_gw' },
+                { value: 'gpsalt', label: 'gpsalt' },
+                { value: 'gpspos', label: 'gpspos' }
             ]),
         nga.field('payload', 'choice')
             .choices([
@@ -1220,7 +1223,7 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
                     .template(function(entry) {
                         return format_mac_array(entry.values.mac);
                     }),
-                nga.field('lsnr', 'number').label('U/L SNR')
+                nga.field('lsnr').label('U/L SNR')
                     .map(function(value, entry) {
                         return array_slice_rxq(entry.gateways, 'lsnr');
                     })
