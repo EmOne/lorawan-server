@@ -40,8 +40,8 @@ downlink({MAC, GWState}, #network{gw_power=DefPower, max_eirp=MaxEIRP}, DevAddr,
     gen_server:cast(?MODULE, {downlink, {MAC, GWState}, DevAddr,
         TxQ#txq{powe=Power}, RFCh, PHYPayload}).
 
-downlink_error(MAC, Opaque, Error) ->
-    gen_server:cast(?MODULE, {downlink_error, MAC, Opaque, Error}).
+downlink_error(MAC, DevAddr, Error) ->
+    gen_server:cast(?MODULE, {downlink_error, MAC, DevAddr, Error}).
 
 value_or_default(Num, _Def) when is_number(Num) -> Num;
 value_or_default(_Num, Def) -> Def.
@@ -95,7 +95,7 @@ handle_cast({downlink, {MAC, GWState}, DevAddr, TxQ, RFCh, PHYPayload}, #state{g
     case dict:find(MAC, Dict) of
         {ok, #gwstats{process=Process, target=Target, tx_times=TxTimes}=Stats} ->
             % send data to the gateway interface handler
-            gen_server:cast(Process, {send, Target, GWState, DevAddr, TxQ, RFCh, PHYPayload}),
+            Process ! {send, Target, GWState, DevAddr, TxQ, RFCh, PHYPayload},
             % store statistics
             Time = lorawan_mac_region:tx_time(byte_size(PHYPayload), TxQ),
             Dict2 = dict:store(MAC, Stats#gwstats{tx_times=[{TxQ#txq.freq, Time} | TxTimes]}, Dict),

@@ -8,7 +8,7 @@
 -export([handle_authorization/2, handle_authorization_ex/2, fields_empty/1, auth_field/2]).
 -export([write/1, parse/1, build/1]).
 -export([parse_field/2, build_field/2]).
--export([timestamp_to_json_date/1]).
+-export([set_body_json_id/3, timestamp_to_json_date/1]).
 
 -include("lorawan.hrl").
 -include("lorawan_db.hrl").
@@ -50,11 +50,20 @@ handle_authentication_field(Req, {digest, Params}) ->
             {false, digest_header()}
     end;
 % if nothing was provided
-handle_authentication_field(_Req, _Else) ->
-    {false, digest_header()}.
+handle_authentication_field(Req, _Else) ->
+    case cowboy_req:method(Req) of
+        <<"OPTIONS">> ->
+            preflight;
+        _ ->
+            {false, digest_header()}
+    end.
 
 handle_authorization(Req, {Read, Write}) ->
     case handle_authentication(Req) of
+        preflight ->
+            % we need the list to be non-empty (so the request is not forbidden),
+            % but also must not grant access to any of the existing fields
+            {true, ['_']};
         {true, AuthScopes} ->
             case lists:member(cowboy_req:method(Req), [<<"OPTIONS">>, <<"GET">>]) of
                 true ->
@@ -70,6 +79,8 @@ handle_authorization(Req, Read) ->
 
 handle_authorization_ex(Req, {Read, Write}) ->
     case handle_authentication(Req) of
+        preflight ->
+            {true, ['_'], []};
         {true, AuthScopes} ->
             {true, authorized_fields(AuthScopes, Read++Write), authorized_fields(AuthScopes, Write)};
         {false, Header} ->
@@ -457,6 +468,10 @@ text_to_intervals(Text) ->
                 [B, C] -> {list_to_integer(B), list_to_integer(C)}
             end
         end, string:tokens(Text, ";, ")).
+
+set_body_json_id(Key, Value, Req) ->
+    cowboy_req:set_resp_body(
+        jsx:encode(#{id => build_field(Key, Value)}), Req).
 
 timestamp_to_json_date({{Yr,Mh,Dy},{Hr,Me,Sc}}) ->
     list_to_binary(

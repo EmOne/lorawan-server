@@ -35,16 +35,8 @@ init([PktFwdOpts]) ->
 handle_call(_Request, _From, State) ->
     {stop, {error, unknownmsg}, State}.
 
-handle_cast({send, {Host, Port, Version}, _GWState, AppState, TxQ, RFCh, PHYPayload},
-        #state{sock=Socket, tokens=Tokens}=State) ->
-    Pk = [{txpk, build_txpk(TxQ, RFCh, PHYPayload)}],
-    % lager:debug("<--- ~p", [Pk]),
-    <<Token:16>> = crypto:strong_rand_bytes(2),
-    {ok, Timer} = timer:send_after(30000, {no_ack, Token}),
-    DStamp = erlang:monotonic_time(milli_seconds),
-    % PULL RESP
-    ok = gen_udp:send(Socket, Host, Port, <<Version, Token:16, 3, (jsx:encode(Pk))/binary>>),
-    {noreply, State#state{tokens=maps:put(Token, {Timer, AppState, DStamp}, Tokens)}}.
+handle_cast(_Request, State) ->
+    {stop, State}.
 
 % PUSH DATA
 handle_info({udp, Socket, Host, Port, <<Version, Token:16, 0, MAC:8/binary, Data/binary>>}, #state{sock=Socket}=State) ->
@@ -79,7 +71,7 @@ handle_info({udp, Socket, Host, Port, <<Version, Token:16, 2, MAC:8/binary>>}, #
 % TX ACK
 handle_info({udp, Socket, _Host, _Port, <<_Version, Token:16, 5, MAC:8/binary, Data/binary>>},
         #state{sock=Socket, tokens=Tokens}=State) ->
-    {AppState, Tokens2} =
+    {DevAddr, Tokens2} =
         case maps:take(Token, Tokens) of
             {{Timer, AState, DStamp}, Tkns} ->
                 AStamp = erlang:monotonic_time(milli_seconds),
@@ -101,7 +93,7 @@ handle_info({udp, Socket, _Host, _Port, <<_Version, Token:16, 5, MAC:8/binary, D
                         undefined -> ok;
                         <<"NONE">> -> ok;
                         Error ->
-                            lorawan_gw_router:downlink_error(MAC, AppState,
+                            lorawan_gw_router:downlink_error(MAC, DevAddr,
                                 list_to_binary(string:to_lower(binary_to_list(Error))))
                     end;
                 _ ->
@@ -114,6 +106,17 @@ handle_info({udp, Socket, _Host, _Port, <<_Version, Token:16, 5, MAC:8/binary, D
 handle_info({udp, _Socket, Host, Port, Msg}, State) ->
     lager:warning("Weird data from ~s:~p: ~w", [inet:ntoa(Host), Port, Msg]),
     {noreply, State};
+
+handle_info({send, {Host, Port, Version}, GWState, DevAddr, TxQ, RFCh, PHYPayload},
+        #state{sock=Socket, tokens=Tokens}=State) ->
+    Pk = [{txpk, build_txpk(TxQ, GWState, RFCh, PHYPayload)}],
+    % lager:debug("<--- ~p", [Pk]),
+    <<Token:16>> = crypto:strong_rand_bytes(2),
+    {ok, Timer} = timer:send_after(30000, {no_ack, Token}),
+    DStamp = erlang:monotonic_time(milli_seconds),
+    % PULL RESP
+    ok = gen_udp:send(Socket, Host, Port, <<Version, Token:16, 3, (jsx:encode(Pk))/binary>>),
+    {noreply, State#state{tokens=maps:put(Token, {Timer, DevAddr, DStamp}, Tokens)}};
 
 handle_info({no_ack, Token}, #state{tokens=Tokens}=State) ->
     case maps:take(Token, Tokens) of
@@ -140,13 +143,11 @@ rxpk(MAC, PkList) ->
     lorawan_gw_router:uplinks(
         lists:map(
             fun(Pk) ->
-                {RxQ, PHYPayload} = parse_rxpk(Pk),
-                % the 'undefined' element (GWState) is used by other gateway adaptors
-                {{MAC, RxQ, undefined}, PHYPayload}
+                {RxQ, GWState, PHYPayload} = parse_rxpk(Pk),
+                {{MAC, RxQ, GWState}, PHYPayload}
             end, PkList)).
 
-parse_rxpk(Pk) ->
-    Data = base64:decode(maps:get(data, Pk)),
+parse_rxpk(#{tmst:=TmSt, freq:=Freq, datr:=DatR, codr:=CodR, data:=Data}=Pk) ->
     % search for a rsig entry with the best RSSI
     Ant =
         lists:foldl(
@@ -158,53 +159,71 @@ parse_rxpk(Pk) ->
                 (_Else, A2) ->
                     A2
             end,
-            undefined, maps:get(rsig, Pk, [])),
+            undefined, get_or_default(rsig, Pk, [])),
     % the modu field is ignored
     % we assume "LORA" datr is a binary string and "FSK" datr is an integer
-    RxQ = list_to_tuple([rxq|[get_rxpk_field(X, Pk, Ant) || X <- record_info(fields, rxq)]]),
-    {RxQ, Data}.
+    {#rxq{
+            freq=Freq,
+            datr=DatR,
+            codr=CodR,
+            time=
+                case get_or_undefined(time, Pk) of
+                    undefined -> undefined;
+                    Value -> iso8601:parse_exact(Value)
+                end,
+            tmms=get_or_undefined(tmms, Pk),
+            rssi=
+                case {Pk, Ant} of
+                    {#{rssi := RSSI}, _} when is_number(RSSI) -> RSSI;
+                    {_, #{rssic := RSSI}} when is_number(RSSI) -> RSSI;
+                    _ -> undefined
+                end,
+            lsnr=
+                case {Pk, Ant} of
+                    {#{lsnr := SNR}, _} when is_number(SNR) -> SNR;
+                    {_, #{lsnr := SNR}} when is_number(SNR) -> SNR;
+                    _ -> undefined
+                end
+        },
+        #{tmst => TmSt},
+        base64:decode(Data)}.
 
-get_rxpk_field(time, List, _Ant) ->
-    case maps:get(time, List, undefined) of
-        undefined -> undefined;
-        Value -> iso8601:parse_exact(Value)
-    end;
-% search for RSSI/SNR values
-get_rxpk_field(rssi, #{rssi := RSSI}, _Ant) when is_number(RSSI) ->
-    RSSI;
-get_rxpk_field(lsnr, #{lsnr := SNR}, _Ant) when is_number(SNR) ->
-    SNR;
-get_rxpk_field(rssi, _List, #{rssic := RSSI}) when is_number(RSSI) ->
-    RSSI;
-get_rxpk_field(lsnr, _List, #{lsnr := SNR}) when is_number(SNR) ->
-    SNR;
-% just get the required field
-get_rxpk_field(Field, List, _Ant) ->
-    maps:get(Field, List, undefined).
+% the JSON may contain "null" values that shall be converted to undefined/default
+get_or_undefined(Key, Map) ->
+    get_or_default(Key, Map, undefined).
+get_or_default(Key, Map, Default) ->
+    case maps:get(Key, Map, undefined) of
+        undefined -> Default;
+        null -> Default;
+        Else -> Else
+    end.
 
-
-build_txpk(TxQ, RFch, Data) ->
-    Modu =
-        case TxQ#txq.datr of
-            Bin when is_binary(Bin) -> <<"LORA">>;
-            Num when is_integer(Num) -> <<"FSK">>
-        end,
-    lists:foldl(
-        fun ({_, undefined}, Acc) ->
-                Acc;
-            ({tmst, Time}, Acc) ->
-                [{imme, false}, {tmst, Time} | Acc];
-            ({time, immediately}, Acc) ->
-                [{imme, true} | Acc];
-            ({time, Time}, Acc) ->
-                [{imme, false}, {time, iso8601:format(Time)} | Acc];
-            ({region, _}, Acc) ->
-                Acc; % internal parameter
-            (Elem, Acc) -> [Elem | Acc]
-        end,
-        [{modu, Modu}, {rfch, RFch}, {ipol, true}, {size, byte_size(Data)}, {data, base64:encode(Data)}],
-        lists:zip(record_info(fields, txq), tl(tuple_to_list(TxQ)))
-    ).
+build_txpk(#txq{freq=Freq, datr=DatR, codr=CodR, time=Time, powe=Power}, GWState, RFch, Data) ->
+    case Time of
+        % class A
+        Num when is_number(Num) ->
+            #{tmst:=TmSt} = GWState,
+            [{imme, false}, {tmst, TmSt+Time*1000000}];
+        % class C
+        immediately ->
+            % note that GWState is undefined in this case
+            [{imme, true}];
+        Stamp ->
+            [{imme, false}, {time, iso8601:format(Stamp)}]
+    end ++ [
+    {freq, Freq},
+    {rfch, RFch},
+    {powe, Power},
+    {modu,
+        if
+            is_binary(DatR) -> <<"LORA">>;
+            is_integer(DatR) -> <<"FSK">>
+        end},
+    {datr, DatR},
+    {codr, CodR},
+    {ipol, true},
+    {size, byte_size(Data)},
+    {data, base64:encode(Data)}].
 
 % some gateways send <<0>>
 trim_json(<<0, Rest/binary>>) ->
