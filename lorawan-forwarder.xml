@@ -2,5 +2,5 @@
 <service>
   <short>LoRaWAN</short>
   <description>Connection from the LoRaWAN packet_forwarder.</description>
-  <port protocol="udp" port="1680"/>
+  <port protocol="udp" port="1730"/>
 </service>

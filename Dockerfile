@@ -14,7 +14,7 @@ RUN mkdir /storage
 VOLUME /storage
 
 # data from port_forwarders
-EXPOSE 1680/udp
+EXPOSE 1730/udp
 # http admin interface
 EXPOSE 8080/tcp
 # https admin interface

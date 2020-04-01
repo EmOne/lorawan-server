@@ -2,6 +2,7 @@
  * Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
  * All rights reserved.
  * Distributed under the terms of the MIT License. See the LICENSE file.
+ * For Thailand Maintain by Anol P. <anol.p@emone.co.th> 
  */
 var myApp = angular.module('myApp', ['ng-admin', 'googlechart', 'ui-leaflet', 'ngVis', 'colorpicker.module']);
 myApp.config(['NgAdminConfigurationProvider', function (nga) {
@@ -60,7 +61,13 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         { value: 'AU915', label: 'Australia 915-928MHz' },
         { value: 'CN470', label: 'China 470-510MHz' },
         { value: 'AS923', label: 'Asia 923MHz' },
-        { value: 'KR920', label: 'South Korea 920-923MHz' },
+	// EmOne Private mode    
+        { value: 'TH433', label: 'Thailand 433MHz' },
+	// EmOne for EGAT,MEA,PEA license band    
+        { value: 'TH442', label: 'Thailand 442MHz' },
+        { value: 'TH447', label: 'Thailand 447MHz' },
+        
+	{ value: 'KR920', label: 'South Korea 920-923MHz' },
         { value: 'IN865', label: 'India 865-867MHz' },
         { value: 'RU868', label: 'Russia 864-870MHz' }
     ];
