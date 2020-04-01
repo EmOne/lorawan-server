@@ -11,7 +11,7 @@ const httpClient = (url, options = {}) => {
     options.credentials = 'include';
     return fetchUtils.fetchJson(url, options);
 }
-const dataProvider = jsonServerProvider('http://192.168.88.112:8080/api', httpClient);
+const dataProvider = jsonServerProvider('http://localhost:8080/api', httpClient);
 
 render(
     <Admin appLayout={MyLayout} dashboard={Dashboard} dataProvider={dataProvider}>

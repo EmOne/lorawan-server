@@ -2,6 +2,7 @@
 % Copyright (c) 2016-2019 Petr Gotthard <petr.gotthard@centrum.cz>
 % All rights reserved.
 % Distributed under the terms of the MIT License. See the LICENSE file.
+% For Thailand Maintain by : Anol P. <anol.p@emone.co.th>
 %
 -module(lorawan_admin_choices).
 
@@ -48,8 +49,9 @@ handle_get(Req, #state{name=regions}=State) ->
                     {downlink_datar, downlink_datar_choices0(Region)}
                 ]}
             end,
-            [<<"EU868">>, <<"CN779">>, <<"EU433">>, <<"AS923">>, <<"CN470">>,
-            <<"KR920">>, <<"IN865">>, <<"RU868">>,
+            [<<"EU868">>, <<"CN779">>, <<"EU433">>, 
+	     <<"AS923">>, <<"TH433">>, <<"TH442">>, <<"TH447">>, %For Thailand
+	     <<"CN470">>, <<"KR920">>, <<"IN865">>, <<"RU868">>,
             <<"US902">>, <<"US902-PR">>, <<"AU915">>]),
     {jsx:encode(Regs), Req, State};
 handle_get(Req, #state{name=groups}=State) ->
@@ -126,8 +128,8 @@ downlink_datar_choices0(Region) ->
 both_datar_choices0(Region) ->
     if
         Region == <<"EU868">>; Region == <<"CN779">>; Region == <<"EU433">>;
-        Region == <<"AS923">>; Region == <<"RU868">>;
-        Region == <<"CN470">>; Region == <<"KR920">>; Region == <<"IN865">> -> [
+        Region == <<"AS923">>; Region == <<"TH433">>; Region == <<"TH442">>; Region == <<"TH447">>; %For Thailand
+	Region == <<"RU868">>; Region == <<"CN470">>; Region == <<"KR920">>; Region == <<"IN865">> -> [
             [{value, 0}, {label, <<"SF12 125 kHz (250 bit/s)">>}],
             [{value, 1}, {label, <<"SF11 125 kHz (440 bit/s)">>}],
             [{value, 2}, {label, <<"SF10 125 kHz (980 bit/s)">>}],
@@ -136,11 +138,12 @@ both_datar_choices0(Region) ->
             [{value, 5}, {label, <<"SF7 125 kHz (5470 bit/s)">>}]] ++
         if
             Region == <<"EU868">>; Region == <<"CN779">>; Region == <<"EU433">>;
-            Region == <<"AS923">>; Region == <<"RU868">> -> [
+            Region == <<"AS923">>; Region == <<"TH433">>; Region == <<"TH442">>; Region == <<"TH447">>; %For Thailand 
+	    Region == <<"RU868">> -> [
                 [{value, 6}, {label, <<"SF7 250 kHz (11000 bit/s)">>}],
-                [{value, 7}, {label, <<"50 kbps (50000 bit/s)">>}]];
+                [{value, 7}, {label, <<"50 kbps (50000 bit/s)">>}]]; 
             true ->
-                []
+            	[]
         end
     end.
 
