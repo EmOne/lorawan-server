@@ -147,7 +147,7 @@ On the Authentication tab:
    - **Password/Key** is the access policy *Primary key* (encoded using Base64)
  - When authenticating using the device key:
    - **Name** shall be empty
-   - **Password/Key** shall be `{appargs}`. Make sure you added `appargs` to your
+   - **Password/Key** shall be `{appargs}`. Make sure you added *Primary key* in app arguments of [Devices](Devices.md) to your
      [Handler](Handlers.md) Fields.
 
 
