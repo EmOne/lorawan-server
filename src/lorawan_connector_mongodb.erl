@@ -33,7 +33,7 @@ init([#connector{connid=Id, app=App, uri= <<"mongodb://", Servers0/binary>>,
     % connect
     {UserName, Password} = credentials(Connector),
     mongodb:replicaSets(Pool, 10,
-        string:tokens(binary_to_list(Servers0), ", "), UserName, Password),
+        string:lexemes(binary_to_list(Servers0), ", "), UserName, Password),
     mongodb:connect(Pool),
     try
         {ok, #state{
@@ -109,8 +109,8 @@ store_fields(Pool, Pattern, Vars0) ->
                 {<<"local">>, CN}
         end,
     Mong = mongoapi:new(Pool, Database),
-    Mong:createCollection(Collection),
-    {ok, _} = Mong:save(Collection, prepare_bson(Vars0)).
+    mongoapi:createCollection(Collection, Mong),
+    {ok, _} = mongoapi:save(Collection, prepare_bson(Vars0), Mong).
 
 prepare_bson(Data) ->
     maps:map(

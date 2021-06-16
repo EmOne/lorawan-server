@@ -148,6 +148,9 @@ myApp.config(['NgAdminConfigurationProvider', function (nga) {
         nga.field('admin_url').label('Admin URL'),
         nga.field('items_per_page', 'number'),
         nga.field('slack_token'),
+        nga.field('app', 'reference').label('Send events to')
+            .targetEntity(handlers)
+            .targetField(nga.field('app')),
         // E-Mail
         nga.field('email_from').label('From'),
         nga.field('email_server').label('SMTP Server'),
@@ -1753,6 +1756,8 @@ return {
     },
     link: function($scope) {
             function updateData() {
+                if (!'value' in $scope)
+                    return
                 $http({method: 'GET', url: '/admin/sgraph/'.concat($scope.value)})
                     .then(function(response) {
                         $scope.srvChartObject.data = response.data.array;
@@ -1802,6 +1807,8 @@ return {
     },
     link: function($scope) {
             function updateData() {
+                if (!'value' in $scope)
+                    return
                 $http({method: 'GET', url: '/admin/pgraph/'.concat($scope.value)})
                     .then(function(response) {
                         $scope.prChartObject.data = response.data.array;
@@ -1850,6 +1857,8 @@ return {
     },
     link: function($scope) {
             function updateData() {
+                if (!'value' in $scope)
+                    return
                 $http({method: 'GET', url: '/admin/tgraph/'.concat($scope.value)})
                     .then(function(response) {
                         $scope.txChartObject.data = response.data.array;
@@ -1900,6 +1909,8 @@ return {
     },
     link: function($scope) {
             function updateData() {
+                if (!'value' in $scope)
+                    return
                 $http({method: 'GET', url: '/admin/rgraph/'.concat($scope.value)})
                     .then(function(response) {
                         $scope.rxChartObject.data = response.data.array;
@@ -1953,6 +1964,8 @@ return {
     },
     link: function($scope) {
             function updateData() {
+                if (!'value' in $scope)
+                    return
                 $http({method: 'GET', url: '/admin/qgraph/'.concat($scope.value)})
                     .then(function(response) {
                         $scope.rxqChartObject.data = response.data.array;
@@ -2005,6 +2018,8 @@ return {
     },
     link: function($scope) {
             function updateData() {
+                if (!'value' in $scope)
+                    return
                 $http({method: 'GET', url: '/admin/ngraph/'.concat($scope.value)})
                     .then(function(response) {
                         $scope.rxdChartObject.data = response.data.array;
