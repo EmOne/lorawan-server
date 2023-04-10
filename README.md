@@ -54,7 +54,7 @@ The server:
      over-the-air activation (OTAA).
    * Supports both unconfirmed and confirmed data uplink and downlink.
    * Supports multicast to user-defined groups.
-   * Supports all regions standartized in LoRaWAN 1.0.3 Regional Parameters for
+   * Supports all regions standardized in LoRaWAN 1.0.3 Regional Parameters for
      Europe, US, China, Australia, Asia, South Korea, India and Russia.
  * Provides a network management interface.
    * Supports both manual and automatic configuration of data rate (ADR) and other parameters.
@@ -199,8 +199,3 @@ The lorawan-server is distributed under the terms of the MIT License.
 See the [LICENSE](LICENSE).
 
 Copyright (c) 2016-2019 Petr Gotthard
-
-### Sponsors
-
-<a href="https://softline.com/"><img align="left" src="doc/images/X1_Softline.png"></a>
-Softline is a leading global Information Technology solutions and services provider focused on emerging markets such as Eastern Europe, Central Asia, Americas, and Asia. We help our customer achieve digital transformation and protect their business with cybersecurity technologies. Our services include end-to-end technology solutions, public and private clouds, software and hardware provisioning and broad array of associated services.
