@@ -1,6 +1,24 @@
 #!/bin/bash
-SERVER="localhost:8080"
-AUTH="admin:admin"
+
+help_msg()
+{
+	echo "Usage: dbexport <ip:port> <user:pwd> or type your information below"
+	echo
+	read -p "IP address: " IPADDR
+	read -p "Port: " PORT
+	read -p "User: " USERNAME
+	read -s -p "Password: " PASSWORD
+	SERVER=$IPADDR:$PORT
+	AUTH=$USERNAME:$PASSWORD
+	echo
+}
+
+if [ -z $1 ] || [ -z $2 ]; then
+	help_msg
+else
+	SERVER=$1
+	AUTH=$2
+fi
 
 DIR=backup-$(date +"%Y%m%d-%H%M%S")
 mkdir -p $DIR
@@ -8,3 +26,9 @@ mkdir -p $DIR
 for db in config users areas gateways multicast_channels networks groups profiles devices nodes ignored_nodes handlers connectors; do
     curl --digest -u $AUTH --output $DIR/$db.json http://$SERVER/api/$db
 done
+
+tar cJf $DIR.tar.xz ./$DIR 
+rm -r $DIR
+
+echo "=====Finished====="
+
